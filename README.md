@@ -22,6 +22,8 @@ single shot => turn capabiltiy enhancement
 
 knowledge management / knowledge RAG 
 
+i/o validation + formatting 
+
 ## Source of truth
 
 - Plan and design: `coilyco-bridge/agentic-os-hardware` (aosh), `docs/plan/`. The headless build doc there is the build spec.
