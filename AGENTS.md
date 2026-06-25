@@ -1,6 +1,6 @@
 # Agent instructions - agent-proxy
 
-The reliability proxy in front of the local LLM fleet. Read this, then read the build spec before writing code.
+A capability platform in front of the local agent and LLM fleet, with the reliability proxy as phase 1. Read this, then read the build spec before writing code. Phase 1 stays tightly scoped to the reliability proxy. The broader capability phases live in `docs/ROADMAP.md` and are not implemented until their phase opens.
 
 ## Build spec lives in aosh
 
