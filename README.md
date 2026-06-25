@@ -18,6 +18,10 @@ credential injection - particularly via mcp pass through
 
 data formattjnf / data management
 
+single shot => turn capabiltiy enhancement
+
+knowledge management / knowledge RAG 
+
 ## Source of truth
 
 - Plan and design: `coilyco-bridge/agentic-os-hardware` (aosh), `docs/plan/`. The headless build doc there is the build spec.
