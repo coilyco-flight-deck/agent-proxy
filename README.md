@@ -10,6 +10,8 @@ Full o11y (OpenTelemetry, Arize Phoenix, signoz, bugsnag, structlog). Two replic
 
 It exists because raw ollama served a 256k-capable model at a silent 32k ceiling, and every `/v1` harness (opencode, crush, openclaw, openwebui) degraded mid-loop while goose, on the native API with context hygiene, did not. This proxy drags every harness up to goose's reliability.
 
+model upskilling, particularly in the realm of tool use 
+
 ## Source of truth
 
 - Plan and design: `coilyco-bridge/agentic-os-hardware` (aosh), `docs/plan/`. The headless build doc there is the build spec.
