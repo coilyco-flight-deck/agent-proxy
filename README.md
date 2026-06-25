@@ -12,6 +12,12 @@ It exists because raw ollama served a 256k-capable model at a silent 32k ceiling
 
 model upskilling, particularly in the realm of tool use 
 
+tool injection, such as web search and api calls (see next). comventional capabililty enhancement such as data persistence 
+
+credential injection - particularly via mcp pass through
+
+data formattjnf / data management
+
 ## Source of truth
 
 - Plan and design: `coilyco-bridge/agentic-os-hardware` (aosh), `docs/plan/`. The headless build doc there is the build spec.
