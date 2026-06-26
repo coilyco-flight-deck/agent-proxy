@@ -8,7 +8,7 @@ Status legend used below: **planned** means specified but not built, **building*
 
 The locked scope. Each feature maps to an aosh leg `04-headless-proxy-build.md` build step or a leg `02-reference-architecture.md` component.
 
-* **Skeleton + observability** - planned - the `app/` tree with obs wired before any logic: structlog JSON, prometheus `/metrics`, OpenTelemetry tracer, Sentry init from config, and `/healthz` returning 200. (leg 04 step 1, leg 02 observability component)
+* **Skeleton + observability** - landed - the `app/` tree with obs wired before any logic: structlog JSON, prometheus `/metrics`, OpenTelemetry tracer, Sentry init from config, and `/healthz` returning 200. (leg 04 step 1, leg 02 observability component)
 * **Backend registry** - planned - a logical-model table mapping each name to `{backend_url, ollama_tag, num_ctx}`. (leg 04 step 2, leg 02 upstream client)
 * **num_ctx injection** - planned - the httpx client forwards to the backend's native ollama `/api/chat` with `options.num_ctx` injected, so a 55k-token request returns `prompt_eval_count` near the injected value, not 32767. The highest-value fix. (leg 04 step 2, leg 02 num_ctx injection)
 * **In-memory queue + worker pool** - planned - a bounded `asyncio.Queue` and worker pool as the resilience core. The route enqueues and awaits a future, a worker dispatches, backpressure returns 429 when full, and `llm_queue_depth` is exported. (leg 04 step 3, leg 02 in-memory queue)

@@ -1,0 +1,6 @@
+# Ward configuration for the agent-proxy project
+# This file defines custom commands (verbs) for the project
+
+test: uv run pytest
+serve: uv run uvicorn app.main:app --port 8080
+sync: uv run uv sync
