@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass, field
 
 import structlog
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 from .config import get_settings
 
@@ -54,6 +54,11 @@ llm_prompt_tokens = Histogram(
 llm_upstream_latency_seconds = Histogram(
     "llm_upstream_latency_seconds", "Upstream generation latency", ["logical_model", "backend"]
 )
+
+
+def metrics_text() -> bytes:
+    """Prometheus exposition bytes for the ``/metrics`` route (default registry)."""
+    return generate_latest()
 
 
 def _configure_structlog(log_level: str) -> None:
@@ -168,6 +173,17 @@ def _configure_sentry(dsn: str, service_name: str) -> None:
         sentry_sdk.init(dsn=dsn, traces_sample_rate=0.0, environment=service_name)
     except Exception:
         pass
+
+
+def get_logger(name: str) -> structlog.BoundLogger:
+    """A JSON structlog bound logger. structlog is configured on first obs setup,
+    but log lines emit even before that with structlog's own defaults."""
+    return structlog.get_logger(name)
+
+
+def init_sentry() -> None:
+    """Initialize Sentry from settings, only when a DSN is configured."""
+    _configure_sentry(get_settings().resolved_sentry_dsn(), get_settings().service_name)
 
 
 _initialized = False

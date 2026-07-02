@@ -19,13 +19,21 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST
 
 from . import resilience, upstream
 from .analysis import apply_context_budget
 from .config import get_settings
 from .models import get_registry
-from .obs import RequestTraceContext, get_tracer, is_trace_bodies_enabled, llm_prompt_tokens, llm_requests_total, log
+from .obs import (
+    RequestTraceContext,
+    get_tracer,
+    is_trace_bodies_enabled,
+    llm_prompt_tokens,
+    llm_requests_total,
+    log,
+    metrics_text,
+)
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed
 
@@ -72,7 +80,7 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/metrics")
 async def metrics() -> Response:
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(content=metrics_text(), media_type=CONTENT_TYPE_LATEST)
 
 
 # --------------------------------------------------------------------------- #
