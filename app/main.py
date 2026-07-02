@@ -152,7 +152,9 @@ def _chat_completion_response(model_name: str, result: upstream.UpstreamResult) 
 
 
 def _error(status: int, message: str, err_type: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"message": message, "type": err_type}})
+    return JSONResponse(
+        status_code=status, content={"error": {"message": message, "type": err_type}}
+    )
 
 
 def _trace_context(
@@ -198,29 +200,46 @@ async def _stream_chat(model, messages, tools, options, model_name: str) -> Stre
         model.name,
         model_name,
         "chat",
-        extra={
-            "agentproxy.messages": messages,
-            "agentproxy.tools": tools or [],
-            "agentproxy.options": options,
-        }
-        if is_trace_bodies_enabled()
-        else None,
+        extra=(
+            {
+                "agentproxy.messages": messages,
+                "agentproxy.tools": tools or [],
+                "agentproxy.options": options,
+            }
+            if is_trace_bodies_enabled()
+            else None
+        ),
     )
     tracer = get_tracer()
 
     async def gen() -> AsyncIterator[str]:
-        base = {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name}
+        base = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+        }
         # Prime with the assistant role delta (OpenAI clients expect it first).
-        first = {**base, "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
+        first = {
+            **base,
+            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        }
         yield f"data: {json.dumps(first)}\n\n"
         finish = "stop"
         try:
             if tracer is None:
-                async for chunk in resilience.dispatch_stream(model, messages, tools=tools, options=options, trace_ctx=trace_ctx):
+                async for chunk in resilience.dispatch_stream(
+                    model, messages, tools=tools, options=options, trace_ctx=trace_ctx
+                ):
                     msg = chunk.get("message") or {}
                     piece = msg.get("content") or ""
                     if piece:
-                        delta = {**base, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}
+                        delta = {
+                            **base,
+                            "choices": [
+                                {"index": 0, "delta": {"content": piece}, "finish_reason": None}
+                            ],
+                        }
                         yield f"data: {json.dumps(delta)}\n\n"
                     if chunk.get("done"):
                         finish = "length" if chunk.get("done_reason") == "length" else "stop"
@@ -228,11 +247,18 @@ async def _stream_chat(model, messages, tools, options, model_name: str) -> Stre
                 with tracer.start_as_current_span("request.chat") as span:
                     for key, value in trace_ctx.attrs().items():
                         span.set_attribute(key, value)
-                    async for chunk in resilience.dispatch_stream(model, messages, tools=tools, options=options, trace_ctx=trace_ctx):
+                    async for chunk in resilience.dispatch_stream(
+                        model, messages, tools=tools, options=options, trace_ctx=trace_ctx
+                    ):
                         msg = chunk.get("message") or {}
                         piece = msg.get("content") or ""
                         if piece:
-                            delta = {**base, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}
+                            delta = {
+                                **base,
+                                "choices": [
+                                    {"index": 0, "delta": {"content": piece}, "finish_reason": None}
+                                ],
+                            }
                             yield f"data: {json.dumps(delta)}\n\n"
                         if chunk.get("done"):
                             finish = "length" if chunk.get("done_reason") == "length" else "stop"
@@ -273,13 +299,15 @@ async def chat_completions(request: Request) -> Response:
         model_name,
         "chat",
         request.headers.get("x-request-id", ""),
-        extra={
-            "agentproxy.messages": messages,
-            "agentproxy.tools": tools or [],
-            "agentproxy.options": options,
-        }
-        if is_trace_bodies_enabled()
-        else None,
+        extra=(
+            {
+                "agentproxy.messages": messages,
+                "agentproxy.tools": tools or [],
+                "agentproxy.options": options,
+            }
+            if is_trace_bodies_enabled()
+            else None
+        ),
     )
     tracer = get_tracer()
 
@@ -294,10 +322,14 @@ async def chat_completions(request: Request) -> Response:
             with tracer.start_as_current_span("request.chat") as span:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
-                result = await get_queue().submit(model, messages, tools, options, trace_ctx=trace_ctx)
+                result = await get_queue().submit(
+                    model, messages, tools, options, trace_ctx=trace_ctx
+                )
                 span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
                 span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-                span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
+                span.set_attribute(
+                    "response.finish_reasons", [result.done_reason] if result.done_reason else []
+                )
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")
@@ -342,7 +374,11 @@ async def completions(request: Request) -> Response:
         model_name,
         "completions",
         request.headers.get("x-request-id", ""),
-        extra={"agentproxy.prompt": prompt, "agentproxy.options": options} if is_trace_bodies_enabled() else None,
+        extra=(
+            {"agentproxy.prompt": prompt, "agentproxy.options": options}
+            if is_trace_bodies_enabled()
+            else None
+        ),
     )
     tracer = get_tracer()
 
@@ -353,10 +389,14 @@ async def completions(request: Request) -> Response:
             with tracer.start_as_current_span("request.completions") as span:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
-                result = await get_queue().submit(model, messages, None, options, trace_ctx=trace_ctx)
+                result = await get_queue().submit(
+                    model, messages, None, options, trace_ctx=trace_ctx
+                )
                 span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
                 span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-                span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
+                span.set_attribute(
+                    "response.finish_reasons", [result.done_reason] if result.done_reason else []
+                )
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")

@@ -76,17 +76,25 @@ def _default_registry() -> dict[str, LogicalModel]:
 
     # Tags chosen to exist on the tower today; a deploy override can repoint them.
     return {
-        "fast-think": LogicalModel("fast-think", FAST_THINK_NUM_CTX, [tower_backend("qwen3:30b-a3b")]),
+        "fast-think": LogicalModel(
+            "fast-think", FAST_THINK_NUM_CTX, [tower_backend("qwen3:30b-a3b")]
+        ),
         "fast": LogicalModel("fast", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3-coder:30b")]),
         "ctx-think": LogicalModel("ctx-think", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3:32b")]),
         "ctx": LogicalModel("ctx", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3-coder:30b")]),
         "tune": LogicalModel("tune", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3:30b-a3b")]),
-        "gpt-oss-120b": LogicalModel("gpt-oss-120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]),
-        "gpt-oss:120b": LogicalModel("gpt-oss:120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]),
+        "gpt-oss-120b": LogicalModel(
+            "gpt-oss-120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]
+        ),
+        "gpt-oss:120b": LogicalModel(
+            "gpt-oss:120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]
+        ),
     }
 
 
-def _apply_overrides(base: dict[str, LogicalModel], overrides: dict[str, Any]) -> dict[str, LogicalModel]:
+def _apply_overrides(
+    base: dict[str, LogicalModel], overrides: dict[str, Any]
+) -> dict[str, LogicalModel]:
     """Merge a deploy-supplied override dict over the built-in table.
 
     Shape: ``{name: {"num_ctx": int, "backends": [{"name","url","ollama_tag","timeout"?}, ...]}}``.

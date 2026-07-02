@@ -5,7 +5,9 @@ from app.upstream import UpstreamResult
 
 
 def _r(content="", tool_calls=None, thinking=""):
-    return UpstreamResult(model="m", content=content, thinking=thinking, tool_calls=tool_calls or [])
+    return UpstreamResult(
+        model="m", content=content, thinking=thinking, tool_calls=tool_calls or []
+    )
 
 
 def test_empty_content_is_rejected():

@@ -55,3 +55,13 @@ agent-proxy = "app.main:main"
 # bare `async def` with no per-test marker, so auto mode is what makes them run
 # instead of being skipped.
 asyncio_mode = "auto"
+
+# The declared dev tools are gated in CI (.forgejo/workflows/ci.yml). These three
+# blocks are the single source of truth the gate reads, so `uv run black --check .`,
+# `uv run ruff check .`, and `uv run mypy app` behave identically in CI and locally.
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100

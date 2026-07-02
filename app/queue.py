@@ -18,7 +18,14 @@ from typing import Any
 from . import resilience
 from .config import get_settings
 from .models import LogicalModel
-from .obs import RequestTraceContext, llm_queue_depth, llm_queue_rejected_total, log, request_log_fields, get_tracer
+from .obs import (
+    RequestTraceContext,
+    llm_queue_depth,
+    llm_queue_rejected_total,
+    log,
+    request_log_fields,
+    get_tracer,
+)
 from .upstream import UpstreamResult
 
 
@@ -84,7 +91,14 @@ class WorkQueue:
             raise RuntimeError("queue not started")
         loop = asyncio.get_running_loop()
         future: asyncio.Future[UpstreamResult] = loop.create_future()
-        job = Job(model=model, messages=messages, tools=tools, options=options, trace_ctx=trace_ctx, future=future)
+        job = Job(
+            model=model,
+            messages=messages,
+            tools=tools,
+            options=options,
+            trace_ctx=trace_ctx,
+            future=future,
+        )
         try:
             self._queue.put_nowait(job)
         except asyncio.QueueFull:
@@ -104,7 +118,9 @@ class WorkQueue:
             result = await future
             span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
             span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-            span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
+            span.set_attribute(
+                "response.finish_reasons", [result.done_reason] if result.done_reason else []
+            )
             return result
 
     async def _worker(self, idx: int) -> None:
@@ -113,7 +129,11 @@ class WorkQueue:
             llm_queue_depth.set(self._queue.qsize())
             try:
                 result = await resilience.dispatch(
-                    job.model, job.messages, tools=job.tools, options=job.options, trace_ctx=job.trace_ctx
+                    job.model,
+                    job.messages,
+                    tools=job.tools,
+                    options=job.options,
+                    trace_ctx=job.trace_ctx,
                 )
                 if not job.future.done():
                     job.future.set_result(result)

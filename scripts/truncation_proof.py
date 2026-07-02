@@ -45,13 +45,21 @@ def main() -> int:
 
     direct = _post(
         f"{tower}/v1/chat/completions",
-        {"model": "qwen3-coder:30b", "messages": [{"role": "user", "content": prompt}], "max_tokens": 16},
+        {
+            "model": "qwen3-coder:30b",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 16,
+        },
     )
     direct_kept = direct["usage"]["prompt_tokens"]
 
     through = _post(
         f"{proxy}/v1/chat/completions",
-        {"model": "fast-think", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024},
+        {
+            "model": "fast-think",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1024,
+        },
     )
     proxy_kept = through["usage"]["prompt_tokens"]
 

@@ -16,8 +16,14 @@ from app.obs import _otlp_http_traces_url, get_logger, init_sentry, metrics_text
         ("http://host.docker.internal:4318/", "http://host.docker.internal:4318/v1/traces"),
         ("http://localhost:4318", "http://localhost:4318/v1/traces"),
         # Already-full traces URL is left alone (idempotent), no double-append.
-        ("http://host.docker.internal:4318/v1/traces", "http://host.docker.internal:4318/v1/traces"),
-        ("http://host.docker.internal:4318/v1/traces/", "http://host.docker.internal:4318/v1/traces"),
+        (
+            "http://host.docker.internal:4318/v1/traces",
+            "http://host.docker.internal:4318/v1/traces",
+        ),
+        (
+            "http://host.docker.internal:4318/v1/traces/",
+            "http://host.docker.internal:4318/v1/traces",
+        ),
     ],
 )
 def test_otlp_http_traces_url(endpoint, expected):
@@ -35,7 +41,13 @@ def test_get_logger_emits_json(capsys):
 def test_metrics_text_exposes_leg04_names():
     text = metrics_text()
     assert isinstance(text, bytes)
-    for name in (b"llm_queue_depth", b"llm_retries_total", b"llm_fallbacks_total", b"llm_circuit_state", b"llm_truncation_avoided_total"):
+    for name in (
+        b"llm_queue_depth",
+        b"llm_retries_total",
+        b"llm_fallbacks_total",
+        b"llm_circuit_state",
+        b"llm_truncation_avoided_total",
+    ):
         assert name in text
 
 

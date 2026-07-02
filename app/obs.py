@@ -35,12 +35,16 @@ llm_retries_total = Counter(
     "llm_retries_total", "Dispatch retries against a single backend", ["logical_model", "backend"]
 )
 llm_fallbacks_total = Counter(
-    "llm_fallbacks_total", "Falls to the next backend in a logical model's chain", ["logical_model", "backend"]
+    "llm_fallbacks_total",
+    "Falls to the next backend in a logical model's chain",
+    ["logical_model", "backend"],
 )
 # 0 = closed (healthy), 1 = open (tripped), 2 = half-open (probing).
 llm_circuit_state = Gauge("llm_circuit_state", "Per-backend circuit breaker state", ["backend"])
 llm_truncation_avoided_total = Counter(
-    "llm_truncation_avoided_total", "Requests trimmed to fit the safe context budget", ["logical_model"]
+    "llm_truncation_avoided_total",
+    "Requests trimmed to fit the safe context budget",
+    ["logical_model"],
 )
 llm_validation_failures_total = Counter(
     "llm_validation_failures_total", "Responses rejected by validation", ["logical_model", "reason"]

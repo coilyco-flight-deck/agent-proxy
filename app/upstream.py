@@ -144,25 +144,39 @@ async def chat(
         attrs.update(span_attrs)
     if tracer is None:
         try:
-            resp = await get_client().post(f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend))
+            resp = await get_client().post(
+                f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend)
+            )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise UpstreamError(f"{backend.name}: {exc}") from exc
-        return _parse_chat_response(resp.json()) if backend.dialect == "ollama" else _parse_openai_chat_response(resp.json())
+        return (
+            _parse_chat_response(resp.json())
+            if backend.dialect == "ollama"
+            else _parse_openai_chat_response(resp.json())
+        )
     with tracer.start_as_current_span("upstream.chat") as span:
         for key, value in attrs.items():
             span.set_attribute(key, value)
         try:
-            resp = await get_client().post(f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend))
+            resp = await get_client().post(
+                f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend)
+            )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             span.record_exception(exc)
             span.set_attribute("agentproxy.upstream.error", str(exc))
             raise UpstreamError(f"{backend.name}: {exc}") from exc
-        result = _parse_chat_response(resp.json()) if backend.dialect == "ollama" else _parse_openai_chat_response(resp.json())
+        result = (
+            _parse_chat_response(resp.json())
+            if backend.dialect == "ollama"
+            else _parse_openai_chat_response(resp.json())
+        )
         span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
         span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-        span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
+        span.set_attribute(
+            "response.finish_reasons", [result.done_reason] if result.done_reason else []
+        )
         return result
 
 
@@ -224,7 +238,10 @@ async def chat_stream(
                     message["thinking"] = reasoning
                 if tool_calls := delta.get("tool_calls"):
                     message["tool_calls"] = tool_calls
-                out: dict[str, Any] = {"message": message, "done": choice.get("finish_reason") is not None}
+                out: dict[str, Any] = {
+                    "message": message,
+                    "done": choice.get("finish_reason") is not None,
+                }
                 if choice.get("finish_reason"):
                     out["done_reason"] = choice.get("finish_reason")
                 yield out
@@ -252,7 +269,9 @@ async def generate(
     elif options:
         body.update(options)
     try:
-        resp = await get_client().post(f"{backend.url}/api/generate", json=body, timeout=_timeout(backend))
+        resp = await get_client().post(
+            f"{backend.url}/api/generate", json=body, timeout=_timeout(backend)
+        )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise UpstreamError(f"{backend.name}: {exc}") from exc
@@ -270,7 +289,9 @@ async def generate(
 async def health(backend: Backend) -> bool:
     """Cheap liveness probe used by the circuit breaker's half-open recovery."""
     try:
-        resp = await get_client().get(f"{backend.url}{_health_path(backend)}", timeout=httpx.Timeout(5.0))
+        resp = await get_client().get(
+            f"{backend.url}{_health_path(backend)}", timeout=httpx.Timeout(5.0)
+        )
         return resp.status_code == 200
     except httpx.HTTPError:
         return False

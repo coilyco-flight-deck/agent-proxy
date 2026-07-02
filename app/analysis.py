@@ -73,7 +73,11 @@ _ACTION_VERBS = (
     "pushed",
 )
 _CLAIM_RE = re.compile(
-    r"\b(?:" + "|".join(re.escape(p) for p in _ACTION_LEAD_INS) + r")\b.*?\b(?:" + "|".join(_ACTION_VERBS) + r")\b",
+    r"\b(?:"
+    + "|".join(re.escape(p) for p in _ACTION_LEAD_INS)
+    + r")\b.*?\b(?:"
+    + "|".join(_ACTION_VERBS)
+    + r")\b",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -106,7 +110,9 @@ def _message_text(message: dict[str, Any]) -> str:
     if isinstance(content, str):
         text = content
     elif isinstance(content, list):
-        parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+        parts = [
+            p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"
+        ]
         text = " ".join(parts)
     else:
         text = ""

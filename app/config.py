@@ -61,9 +61,13 @@ class Settings(BaseSettings):
     # Resilience knobs (leg 04 step 4).
     max_retries: int = Field(default=2, description="Retries per backend before falling back")
     retry_base_delay: float = Field(default=0.5, description="Backoff base seconds")
-    circuit_fail_threshold: int = Field(default=5, description="Consecutive fails before opening a breaker")
+    circuit_fail_threshold: int = Field(
+        default=5, description="Consecutive fails before opening a breaker"
+    )
     circuit_cooldown: float = Field(default=30.0, description="Seconds a breaker stays open")
-    request_timeout: float = Field(default=600.0, description="Per-backend upstream timeout seconds")
+    request_timeout: float = Field(
+        default=600.0, description="Per-backend upstream timeout seconds"
+    )
 
     # Context-budget headroom reserved for the completion (leg 04 step 5).
     num_ctx_headroom: int = Field(default=1024)

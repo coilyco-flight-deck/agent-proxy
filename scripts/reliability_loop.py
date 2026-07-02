@@ -34,11 +34,9 @@ from app.upstream import UpstreamResult
 
 # A file-shaped blob so each accumulated tool output pushes context upward. About
 # ~8k tokens per blob; a couple of these already overflow the 32k default.
-_BLOB = (
-    "\n".join(
-        f"    row[{i}] = compute(payload[{i}], config['key_{i}'], flags={i % 7})  # noqa"
-        for i in range(1200)
-    )
+_BLOB = "\n".join(
+    f"    row[{i}] = compute(payload[{i}], config['key_{i}'], flags={i % 7})  # noqa"
+    for i in range(1200)
 )
 
 _TOOLS = [
@@ -112,21 +110,27 @@ def run(target: str, turns: int) -> tuple[int, Counter[str], dict]:
 
         expect_tool = turn % 2 == 1
         if expect_tool:
-            messages.append({"role": "user", "content": "How many lines are in the accumulated file context?"})
+            messages.append(
+                {"role": "user", "content": "How many lines are in the accumulated file context?"}
+            )
         else:
-            messages.append({"role": "user", "content": "Summarize what you have seen so far in one sentence."})
+            messages.append(
+                {"role": "user", "content": "Summarize what you have seen so far in one sentence."}
+            )
 
         ok, reason = _score_turn(url, model, messages, expect_tool)
         reasons[reason] += 1
         usable += int(ok)
         # Feed a plausible assistant turn back so the conversation keeps growing.
         messages.append({"role": "assistant", "content": "acknowledged."})
-        print(f"  turn {turn:2d} expect_tool={expect_tool!s:5} -> {'OK' if ok else 'FAIL:' + reason}")
+        print(
+            f"  turn {turn:2d} expect_tool={expect_tool!s:5} -> {'OK' if ok else 'FAIL:' + reason}"
+        )
 
     pct = 100.0 * usable / turns if turns else 0.0
     print(f"\ntarget={target} model={model} runs={turns} reliability={pct:.0f}%")
     print("failure reasons:", dict(reasons))
-    
+
     # Return results for reporting
     return usable, reasons, {"target": target, "model": model, "runs": turns, "reliability": pct}
 
@@ -136,10 +140,10 @@ def main() -> int:
     ap.add_argument("--target", choices=["direct", "proxy"], default="proxy")
     ap.add_argument("--turns", type=int, default=6)
     args = ap.parse_args()
-    
+
     # Run the reliability test and get results
     usable, reasons, result_info = run(args.target, args.turns)
-    
+
     # Create a durable report
     timestamp = datetime.datetime.now().isoformat()
     report_content = f"""Reliability Test Report
@@ -155,13 +159,13 @@ Failure reasons:
 """
     for reason, count in reasons.items():
         report_content += f"  {reason}: {count}\n"
-    
+
     report_path = f"reliability_report_{result_info['target']}_{timestamp.replace(':', '-')}.txt"
     with open(report_path, "w") as f:
         f.write(report_content)
-    
+
     print(f"\nReport saved to: {report_path}")
-    
+
     return 0
 
 

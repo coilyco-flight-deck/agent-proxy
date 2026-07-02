@@ -99,11 +99,16 @@ def test_chat_completion_uses_tracing(monkeypatch):
     monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
 
     async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
-        return UpstreamResult(model=backend.ollama_tag, content="Paris", prompt_eval_count=42, eval_count=3)
+        return UpstreamResult(
+            model=backend.ollama_tag, content="Paris", prompt_eval_count=42, eval_count=3
+        )
 
     monkeypatch.setattr(upstream, "chat", fake_chat)
     with TestClient(app) as c:
-        resp = c.post("/v1/chat/completions", json={"model": "fast", "messages": [{"role": "user", "content": "capital of France?"}]})
+        resp = c.post(
+            "/v1/chat/completions",
+            json={"model": "fast", "messages": [{"role": "user", "content": "capital of France?"}]},
+        )
     assert resp.status_code == 200
     assert any(name == "request.chat" for name, _ in spans)
 
