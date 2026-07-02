@@ -18,10 +18,16 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-[project.dependencies]
-fastapi = ">=0.115.0"
-pydantic = ">=2.9.0"
-hypercorn = ">=0.17.0"
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.4.0",
+    "hypercorn>=0.17.0",
+    "httpx>=0.27.0",
+    "structlog>=24.0.0",
+    "prometheus-client>=0.20.0",
+    "tiktoken>=0.7.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -29,9 +35,7 @@ dev = [
     "black>=23.0",
     "ruff>=0.1",
     "mypy>=1.0",
-    "uvicorn>=0.30.0",  
-    "structlog>=24.0.0",
-    "httpx>=0.27.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.scripts]

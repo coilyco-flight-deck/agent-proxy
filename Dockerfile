@@ -8,10 +8,10 @@ RUN apt-get update && apt-get install -y \
 # Set working directory  
 WORKDIR /app
 
-# Copy and install Python dependencies using uv
-COPY pyproject.toml .
+# Copy and install Python dependencies using uv (frozen, runtime-only)
+COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir uv && \
-    uv sync --extra dev
+    uv sync --frozen --no-dev
 
 # Copy application code
 COPY . .
