@@ -2,7 +2,7 @@
 
 import pytest
 
-from app import upstream
+from app import models, upstream
 from app.models import Backend
 
 
@@ -50,16 +50,37 @@ def openai_backend():
 
 
 async def test_num_ctx_is_injected(monkeypatch, backend):
-    fake = _CapturingClient({"model": "m", "message": {"content": "hi"}, "prompt_eval_count": 49151})
+    fake = _CapturingClient(
+        {"model": "m", "message": {"content": "hi"}, "prompt_eval_count": 49151}
+    )
     monkeypatch.setattr(upstream, "get_client", lambda: fake)
 
-    result = await upstream.chat(backend, num_ctx=49152, messages=[{"role": "user", "content": "x"}])
+    result = await upstream.chat(
+        backend, num_ctx=49152, messages=[{"role": "user", "content": "x"}]
+    )
 
     assert fake.last_url == "http://tower:11434/api/chat"
     assert fake.last_body["options"]["num_ctx"] == 49152
     assert fake.last_body["model"] == "qwen3:30b-a3b"
     assert result.prompt_eval_count == 49151
     assert result.content == "hi"
+
+
+async def test_fast_think_num_ctx_comes_from_registry(monkeypatch):
+    """The whole point (issue #9): the registry's num_ctx for ``fast-think``
+    (49152) is the value injected into the outgoing ``/api/chat`` payload."""
+    models.reset_registry()
+    model = models.get_registry().get("fast-think")
+    assert model is not None and model.num_ctx == 49152
+
+    fake = _CapturingClient({"message": {"content": "ok"}})
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+    await upstream.chat(
+        model.backends[0], model.num_ctx, messages=[{"role": "user", "content": "x"}]
+    )
+
+    assert fake.last_url.endswith("/api/chat")
+    assert fake.last_body["options"]["num_ctx"] == 49152
 
 
 async def test_caller_cannot_override_num_ctx(monkeypatch, backend):
@@ -81,13 +102,20 @@ async def test_openai_backend_uses_chat_completions(monkeypatch, openai_backend)
     fake = _CapturingClient(
         {
             "model": "gpt-oss:120b",
-            "choices": [{"message": {"content": "hi", "reasoning_content": "why"}, "finish_reason": "stop"}],
+            "choices": [
+                {
+                    "message": {"content": "hi", "reasoning_content": "why"},
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {"prompt_tokens": 12, "completion_tokens": 7},
         }
     )
     monkeypatch.setattr(upstream, "get_client", lambda: fake)
 
-    result = await upstream.chat(openai_backend, num_ctx=32768, messages=[{"role": "user", "content": "x"}])
+    result = await upstream.chat(
+        openai_backend, num_ctx=32768, messages=[{"role": "user", "content": "x"}]
+    )
 
     assert fake.last_url == "http://tower:8080/v1/chat/completions"
     assert "options" not in fake.last_body
