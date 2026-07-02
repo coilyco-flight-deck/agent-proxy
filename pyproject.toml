@@ -1,45 +1,39 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "agent-proxy"
 version = "0.1.0"
-description = "Reliability proxy for LLMs"
-authors = [{ name = "Kai", email = "kai@example.com" }]
-license = { text = "MIT" }
+description = "A reliability proxy for the local agent and LLM fleet, with the reliability proxy as phase 1."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Kai"}
+]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-]
-
-dependencies = [
-    "fastapi>=0.110.0,<1.0.0",
-    "uvicorn>=0.29.0,<1.0.0",
-    "httpx>=0.27.0,<1.0.0",
-    "pydantic-settings>=2.0.0,<3.0.0",
-    "structlog>=24.0.0,<25.0.0",
-    "prometheus-client>=0.20.0,<1.0.0",
-    "opentelemetry-sdk>=1.20.0,<2.0.0",
-    "opentelemetry-instrumentation-fastapi>=0.44b0,<1.0.0",
-    "opentelemetry-instrumentation-httpx>=0.44b0,<1.0.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.20.0,<2.0.0",
-    "sentry-sdk>=2.0.0,<3.0.0",
-    "tiktoken>=0.5.0,<1.0.0",
-    "boto3>=1.34.0,<2.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4.0,<8.0.0",
-    "pytest-asyncio>=0.21.0,<1.0.0",
+    "pytest>=7.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",  
+    "hypercorn>=0.17.0",
+    "structlog>=24.0.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.9.0",
 ]
 
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+[project.scripts]
+agent-proxy = "app.main:main"
 
-[tool.setuptools]
-packages = ["app"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
+[project.urls]
+"Homepage" = "https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy"
