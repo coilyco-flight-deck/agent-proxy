@@ -12,6 +12,11 @@ sync: uv run uv sync
 test-container: ./test-container.sh
 boot-probe: ./boot_probe.sh
 
+# Daemonless import/build smoke (agent-proxy#31): asserts the runtime deps are a
+# proper PEP 621 array, every runtime dep is locked, and the app imports clean
+# under runtime-only deps. No daemon, no tower - the CI gate runs it too.
+smoke: ./test-fixes.sh
+
 # Prove the 32k truncation cliff is gone through the proxy (leg 04 local
 # validation). Needs the tower reachable (TOWER=<host> or PROXY_TOWER_BASE_URL)
 # and `ward serve` already running.

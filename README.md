@@ -28,6 +28,28 @@ docker run -p 8080:8080 agent-proxy
 4. Build container image: `docker build -t agent-proxy .`  
 5. Run proxy in container mode: `docker run -p 8080:8080 agent-proxy`
 
+### CI quality gate
+
+Every push and pull request is gated by `.forgejo/workflows/ci.yml`, which runs
+the declared dev tooling off `pyproject.toml`. Run the same gate locally before
+landing so CI is green on arrival:
+
+```bash
+uv sync --extra dev
+uv run pytest          # ward test
+uv run ruff check .
+uv run black --check .
+uv run mypy app
+./boot_probe.sh        # ward boot-probe (daemonless boot + endpoint probe)
+./test-fixes.sh        # ward smoke (daemonless import/build smoke)
+```
+
+`[tool.black]`, `[tool.ruff]`, and `[tool.mypy]` in `pyproject.toml` are the
+single source of truth these checks read, so local and CI runs behave
+identically. The Docker-daemon acceptance test (`ward test-container`) and the
+tower-dependent proof/reliability scripts are intentionally left out of CI - they
+need a daemon or the tower and would break a daemonless runner.
+
 ## Local Development
 
 The proxy runs on port 8080 by default. You can customize the port by setting environment variables:
