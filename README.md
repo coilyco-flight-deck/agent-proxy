@@ -49,6 +49,23 @@ The following files are provided to make local containerization reproducible:
 - `README.md` - Documentation for using the proxy  
 - `setup.sh` - Script to initialize developer environment
 
+### Validating the container boots + serves
+
+A build that succeeds is not proof the image runs. Two repeatable checks assert
+the image actually boots and serves `/healthz`, `/v1/models`, and `/metrics`
+(they share `scripts/probe_endpoints.sh`, so the endpoint assertions are
+identical):
+
+- `ward test-container` (`./test-container.sh`) - **with a Docker daemon.**
+  Builds the image, runs it detached, waits for `python -m app.main` to bind,
+  probes the three endpoints from outside the container, and confirms it stays
+  up (no crash / restart loop). Fails loudly with container logs on any error.
+- `ward boot-probe` (`./boot_probe.sh`) - **daemonless.** Reproduces the exact
+  Dockerfile install path (`uv sync --frozen --no-dev`) and CMD
+  (`.venv/bin/python -m app.main`), then probes the same endpoints. This is the
+  check that runs in a ward feature container or a daemonless CI leg, where no
+  Docker daemon is reachable.
+
 ## Testing
 
 All tests must pass before building or deploying:

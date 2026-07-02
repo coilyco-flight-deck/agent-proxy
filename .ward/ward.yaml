@@ -5,6 +5,13 @@ test: uv run pytest
 serve: uv run uvicorn app.main:app --port 8080
 sync: uv run uv sync
 
+# Container acceptance tests (agent-proxy#24). test-container builds the image
+# and asserts it boots + serves /healthz + /v1/models + /metrics (needs a Docker
+# daemon). boot-probe validates the same boot path against the frozen runtime
+# deps with no daemon - the check that runs in a daemonless feature container.
+test-container: ./test-container.sh
+boot-probe: ./boot_probe.sh
+
 # Prove the 32k truncation cliff is gone through the proxy (leg 04 local
 # validation). Needs the tower reachable (TOWER=<host> or PROXY_TOWER_BASE_URL)
 # and `ward serve` already running.
