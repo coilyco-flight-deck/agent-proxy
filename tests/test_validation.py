@@ -52,3 +52,8 @@ def test_repetition_rejected():
 def test_normal_answer_accepted():
     ok, reason = validate_response(_r("The capital of France is Paris."))
     assert ok and reason == "ok"
+
+
+def test_ungrounded_action_claim_is_rejected():
+    ok, reason = validate_response(_r("I have filed the issue and I will report back."))
+    assert not ok and reason == "ungrounded_action_claim"

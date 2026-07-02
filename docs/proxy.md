@@ -46,11 +46,15 @@ wants the full resilience guarantee uses the non-streaming path.
 ## Validation
 
 A response is *usable* when it is non-empty, any emitted tool call has parseable
-arguments, and it is not degenerate repetition. Two deliberate refinements,
-both surfaced by live testing against the tower:
+arguments, it does not hallucinate an unsupported "I did the thing" claim, and
+it is not degenerate repetition. Three deliberate refinements, all surfaced by
+live testing against the tower:
 
 * a legitimately short word answer (`OK`, `42`, `no`) is **not** truncation
   garbage - only a 1-3 char *non-word* reply (a stray symbol) is.
+* a first-person completion claim like "I have filed the issue" is rejected if
+  the response has no tool evidence behind it, so the router can kick the turn
+  back instead of trusting a hallucinated done-state.
 * a reasoning model that emitted `thinking` but ran out of token budget before
   final content did real work - it is surfaced as a length-limited response, not
   rerolled into a 502.
