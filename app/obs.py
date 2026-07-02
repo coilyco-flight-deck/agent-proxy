@@ -78,6 +78,20 @@ def _configure_structlog(log_level: str) -> None:
 _tracer = None
 
 
+def _otlp_http_traces_url(endpoint: str) -> str:
+    """Resolve the OTLP/HTTP traces URL from a configured base endpoint.
+
+    The config value is the OTLP base (e.g. ``http://host.docker.internal:4318``),
+    per OTEL_EXPORTER_OTLP_ENDPOINT convention. But the Python OTLP/HTTP
+    ``OTLPSpanExporter(endpoint=...)`` kwarg is taken VERBATIM and does NOT append
+    the ``/v1/traces`` signal path the way the env var does, so a base value posts
+    to the collector root and gets a 404. Append it here, idempotently."""
+    base = endpoint.rstrip("/")
+    if base.endswith("/v1/traces"):
+        return base
+    return base + "/v1/traces"
+
+
 def _configure_otel(service_name: str, endpoint: str):
     """Best-effort OTel tracer. Degrades to a no-op tracer if the SDK/exporter
     is unavailable, so obs never blocks startup."""
@@ -92,7 +106,9 @@ def _configure_otel(service_name: str, endpoint: str):
         if endpoint:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-            provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+            provider.add_span_processor(
+                BatchSpanProcessor(OTLPSpanExporter(endpoint=_otlp_http_traces_url(endpoint)))
+            )
         trace.set_tracer_provider(provider)
         _tracer = trace.get_tracer(service_name)
     except Exception:
