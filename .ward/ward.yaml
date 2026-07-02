@@ -4,3 +4,12 @@
 test: uv run pytest
 serve: uv run uvicorn app.main:app --port 8080
 sync: uv run uv sync
+
+# Prove the 32k truncation cliff is gone through the proxy (leg 04 local
+# validation). Needs the tower reachable (TOWER=<host> or PROXY_TOWER_BASE_URL)
+# and `ward serve` already running.
+proof: uv run python scripts/truncation_proof.py
+
+# Reliability harness (leg 05): scores a context-growing, tool-using loop and
+# reports a reliability percentage. Pass --target direct|proxy and --turns N.
+reliability: uv run python scripts/reliability_loop.py
