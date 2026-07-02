@@ -30,12 +30,15 @@ from .config import get_settings
 from .analysis import verify_action_claim
 from .models import Backend, LogicalModel
 from .obs import (
+    RequestTraceContext,
     llm_circuit_state,
     llm_fallbacks_total,
     llm_retries_total,
     llm_upstream_latency_seconds,
     llm_validation_failures_total,
     log,
+    request_log_fields,
+    get_tracer,
 )
 from . import upstream
 from .upstream import UpstreamError, UpstreamResult
@@ -192,34 +195,57 @@ async def dispatch(
     *,
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
+    trace_ctx: RequestTraceContext | None = None,
 ) -> UpstreamResult:
     """Dispatch a non-streaming chat with full resilience. Walks the fallback
     chain, retrying each live backend with backoff, validating every response."""
     settings = get_settings()
     last_error: str = "no backends"
+    tracer = get_tracer()
+    trace_attrs = trace_ctx.attrs() if trace_ctx else None
 
     for idx, backend in enumerate(model.backends):
         if not breakers.allow(backend):
             last_error = f"{backend.name} circuit open"
             if idx + 1 < len(model.backends):
                 llm_fallbacks_total.labels(logical_model=model.name, backend=backend.name).inc()
+            log.warning("dispatch.circuit_open", **request_log_fields(trace_ctx, backend=backend.name, outcome="fallback"))
             continue
 
         for attempt in range(settings.max_retries + 1):
+            attempt_span_cm = tracer.start_as_current_span("resilience.attempt") if tracer else None
+            attempt_span = attempt_span_cm.__enter__() if attempt_span_cm is not None else None
+            if attempt_span is not None:
+                attempt_span.set_attribute("agentproxy.logical_model", model.name)
+                attempt_span.set_attribute("agentproxy.backend", backend.name)
+                attempt_span.set_attribute("agentproxy.backend_dialect", backend.dialect)
+                attempt_span.set_attribute("agentproxy.resolved_backend", backend.url)
+                attempt_span.set_attribute("agentproxy.attempt", attempt)
+                if trace_attrs is not None:
+                    for key, value in trace_attrs.items():
+                        attempt_span.set_attribute(key, value)
             try:
                 start = _now()
                 result = await upstream.chat(
-                    backend, model.num_ctx, messages, tools=tools, options=options
+                    backend, model.num_ctx, messages, tools=tools, options=options, span_attrs=trace_attrs
                 )
                 llm_upstream_latency_seconds.labels(
                     logical_model=model.name, backend=backend.name
                 ).observe(_now() - start)
+                if attempt_span is not None:
+                    attempt_span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+                    attempt_span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+                    attempt_span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
             except UpstreamError as exc:
                 breakers.record_failure(backend)
                 last_error = str(exc)
                 log.warning("dispatch.transport_error", backend=backend.name, attempt=attempt, error=str(exc))
+                if attempt_span is not None:
+                    attempt_span.record_exception(exc)
+                    attempt_span.set_attribute("agentproxy.outcome", "failed")
                 if attempt < settings.max_retries:
                     llm_retries_total.labels(logical_model=model.name, backend=backend.name).inc()
+                    log.info("dispatch.retry", **request_log_fields(trace_ctx, backend=backend.name, attempt=attempt, outcome="retry"))
                     await asyncio.sleep(settings.retry_base_delay * (2**attempt))
                     continue
                 break  # exhausted this backend's retries -> fall back
@@ -227,20 +253,40 @@ async def dispatch(
             ok, reason = validate_response(result)
             if ok:
                 breakers.record_success(backend)
+                log.info("dispatch.ok", **request_log_fields(trace_ctx, backend=backend.name, attempt=attempt, outcome="ok"))
+                if attempt_span is not None:
+                    attempt_span.set_attribute("agentproxy.outcome", "ok")
+                    attempt_span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+                    attempt_span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+                    attempt_span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
+                    attempt_span_cm.__exit__(None, None, None)
                 return result
 
             # Bad generation: reroll on this live backend, do not trip the breaker.
             llm_validation_failures_total.labels(logical_model=model.name, reason=reason).inc()
             last_error = f"validation:{reason}"
             log.warning("dispatch.validation_failed", backend=backend.name, reason=reason, attempt=attempt)
+            if attempt_span is not None:
+                attempt_span.set_attribute("agentproxy.outcome", "validation-failure")
+                attempt_span.set_attribute("agentproxy.validation_reason", reason)
             if attempt < settings.max_retries:
                 llm_retries_total.labels(logical_model=model.name, backend=backend.name).inc()
+                log.info("dispatch.retry", **request_log_fields(trace_ctx, backend=backend.name, attempt=attempt, outcome="validation-failure"))
                 await asyncio.sleep(settings.retry_base_delay * (2**attempt))
                 continue
             breakers.record_success(backend)  # backend is alive, just unlucky
+            outcome = "truncation-avoided" if reason == "truncation_garbage" else "validation-failure"
+            log.info("dispatch.validation_terminal", **request_log_fields(trace_ctx, backend=backend.name, attempt=attempt, outcome=outcome, reason=reason))
+            if attempt_span is not None:
+                attempt_span.set_attribute("agentproxy.outcome", "validation-failure")
+                attempt_span.set_attribute("agentproxy.validation_reason", reason)
+                attempt_span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+                attempt_span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+                attempt_span_cm.__exit__(None, None, None)
 
         if idx + 1 < len(model.backends):
             llm_fallbacks_total.labels(logical_model=model.name, backend=backend.name).inc()
+            log.warning("dispatch.fallback", **request_log_fields(trace_ctx, backend=backend.name, outcome="fallback"))
 
     raise AllBackendsFailed(f"{model.name}: all backends failed ({last_error})")
 
@@ -251,6 +297,7 @@ async def dispatch_stream(
     *,
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
+    trace_ctx: RequestTraceContext | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream a chat with connect-time fallback across the chain.
 
@@ -260,13 +307,14 @@ async def dispatch_stream(
     resilience guarantees use the non-streaming path.
     """
     last_error = "no backends"
+    trace_attrs = trace_ctx.attrs() if trace_ctx else None
     for backend in model.backends:
         if not breakers.allow(backend):
             continue
         try:
             first = True
             async for chunk in upstream.chat_stream(
-                backend, model.num_ctx, messages, tools=tools, options=options
+                backend, model.num_ctx, messages, tools=tools, options=options, span_attrs=trace_attrs
             ):
                 if first:
                     first = False
@@ -276,7 +324,10 @@ async def dispatch_stream(
         except UpstreamError as exc:
             breakers.record_failure(backend)
             last_error = str(exc)
-            log.warning("stream.transport_error", backend=backend.name, error=str(exc))
+            log.warning(
+                "stream.transport_error",
+                **request_log_fields(trace_ctx, backend=backend.name, error=str(exc), outcome="failed"),
+            )
             # Only safe to fall back if nothing was emitted yet.
             if not first:
                 raise AllBackendsFailed(f"{model.name}: stream broke mid-flight ({last_error})") from exc

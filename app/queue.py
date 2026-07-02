@@ -18,7 +18,7 @@ from typing import Any
 from . import resilience
 from .config import get_settings
 from .models import LogicalModel
-from .obs import llm_queue_depth, llm_queue_rejected_total, log
+from .obs import RequestTraceContext, llm_queue_depth, llm_queue_rejected_total, log, request_log_fields, get_tracer
 from .upstream import UpstreamResult
 
 
@@ -32,6 +32,7 @@ class Job:
     messages: list[dict[str, Any]]
     tools: list[dict[str, Any]] | None
     options: dict[str, Any] | None
+    trace_ctx: RequestTraceContext | None = None
     future: "asyncio.Future[UpstreamResult]" = field(default=None)  # set on submit
 
 
@@ -69,20 +70,42 @@ class WorkQueue:
         self._queue = None
         log.info("queue.stop")
 
-    async def submit(self, model: LogicalModel, messages, tools, options) -> UpstreamResult:
+    async def submit(
+        self,
+        model: LogicalModel,
+        messages,
+        tools,
+        options,
+        *,
+        trace_ctx: RequestTraceContext | None = None,
+    ) -> UpstreamResult:
         """Enqueue a job and await its result. Raises ``QueueBusy`` when full."""
         if self._queue is None:
             raise RuntimeError("queue not started")
         loop = asyncio.get_running_loop()
         future: asyncio.Future[UpstreamResult] = loop.create_future()
-        job = Job(model=model, messages=messages, tools=tools, options=options, future=future)
+        job = Job(model=model, messages=messages, tools=tools, options=options, trace_ctx=trace_ctx, future=future)
         try:
             self._queue.put_nowait(job)
         except asyncio.QueueFull:
             llm_queue_rejected_total.inc()
+            if trace_ctx is not None:
+                log.warning("queue.rejected", **request_log_fields(trace_ctx, outcome="rejected"))
             raise QueueBusy(model.name)
         llm_queue_depth.set(self._queue.qsize())
-        return await future
+        tracer = get_tracer()
+        if tracer is None:
+            return await future
+        with tracer.start_as_current_span("queue.wait") as span:
+            span.set_attribute("agentproxy.logical_model", model.name)
+            if trace_ctx is not None:
+                for key, value in trace_ctx.attrs().items():
+                    span.set_attribute(key, value)
+            result = await future
+            span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+            span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+            span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
+            return result
 
     async def _worker(self, idx: int) -> None:
         while True:
@@ -90,7 +113,7 @@ class WorkQueue:
             llm_queue_depth.set(self._queue.qsize())
             try:
                 result = await resilience.dispatch(
-                    job.model, job.messages, tools=job.tools, options=job.options
+                    job.model, job.messages, tools=job.tools, options=job.options, trace_ctx=job.trace_ctx
                 )
                 if not job.future.done():
                     job.future.set_result(result)

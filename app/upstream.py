@@ -19,6 +19,7 @@ import httpx
 
 from .config import get_settings
 from .models import Backend
+from .obs import get_tracer
 
 
 class UpstreamError(Exception):
@@ -122,6 +123,7 @@ async def chat(
     *,
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
+    span_attrs: dict[str, Any] | None = None,
 ) -> UpstreamResult:
     """Non-streaming upstream call with the safe context applied where valid."""
     body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": False}
@@ -131,12 +133,37 @@ async def chat(
         body.update(options)
     if tools:
         body["tools"] = tools
-    try:
-        resp = await get_client().post(f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend))
-        resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise UpstreamError(f"{backend.name}: {exc}") from exc
-    return _parse_chat_response(resp.json()) if backend.dialect == "ollama" else _parse_openai_chat_response(resp.json())
+    tracer = get_tracer()
+    attrs = {
+        "agentproxy.backend": backend.name,
+        "agentproxy.backend_dialect": backend.dialect,
+        "agentproxy.resolved_backend": backend.url,
+        "agentproxy.logical_num_ctx": num_ctx,
+    }
+    if span_attrs:
+        attrs.update(span_attrs)
+    if tracer is None:
+        try:
+            resp = await get_client().post(f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend))
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"{backend.name}: {exc}") from exc
+        return _parse_chat_response(resp.json()) if backend.dialect == "ollama" else _parse_openai_chat_response(resp.json())
+    with tracer.start_as_current_span("upstream.chat") as span:
+        for key, value in attrs.items():
+            span.set_attribute(key, value)
+        try:
+            resp = await get_client().post(f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend))
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            span.record_exception(exc)
+            span.set_attribute("agentproxy.upstream.error", str(exc))
+            raise UpstreamError(f"{backend.name}: {exc}") from exc
+        result = _parse_chat_response(resp.json()) if backend.dialect == "ollama" else _parse_openai_chat_response(resp.json())
+        span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+        span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+        span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
+        return result
 
 
 async def chat_stream(
@@ -146,6 +173,7 @@ async def chat_stream(
     *,
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
+    span_attrs: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming upstream call, normalized to the proxy's internal chunk shape."""
     body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": True}
@@ -155,7 +183,21 @@ async def chat_stream(
         body.update(options)
     if tools:
         body["tools"] = tools
+    tracer = get_tracer()
+    attrs = {
+        "agentproxy.backend": backend.name,
+        "agentproxy.backend_dialect": backend.dialect,
+        "agentproxy.resolved_backend": backend.url,
+        "agentproxy.logical_num_ctx": num_ctx,
+    }
+    if span_attrs:
+        attrs.update(span_attrs)
+    span_cm = tracer.start_as_current_span("upstream.chat_stream") if tracer else None
     try:
+        if span_cm is not None:
+            span = span_cm.__enter__()
+            for key, value in attrs.items():
+                span.set_attribute(key, value)
         async with get_client().stream(
             "POST", f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend)
         ) as resp:
@@ -187,7 +229,13 @@ async def chat_stream(
                     out["done_reason"] = choice.get("finish_reason")
                 yield out
     except httpx.HTTPError as exc:
+        if span_cm is not None:
+            span.record_exception(exc)
+            span.set_attribute("agentproxy.upstream.error", str(exc))
         raise UpstreamError(f"{backend.name}: {exc}") from exc
+    finally:
+        if span_cm is not None:
+            span_cm.__exit__(None, None, None)
 
 
 async def generate(

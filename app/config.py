@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     sentry_dsn: str = Field(default="")
     otel_exporter_otlp_endpoint: str = Field(default="")
     service_name: str = Field(default="agent-proxy")
+    trace_bodies: bool = Field(default=False)
 
     # Tower resolution. If PROXY_TOWER_BASE_URL is set it wins outright; else the
     # FQDN resolves from SSM at boot and the base URL is built from it.

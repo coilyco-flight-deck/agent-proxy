@@ -25,7 +25,7 @@ from . import resilience, upstream
 from .analysis import apply_context_budget
 from .config import get_settings
 from .models import get_registry
-from .obs import llm_prompt_tokens, llm_requests_total, log
+from .obs import RequestTraceContext, get_tracer, is_trace_bodies_enabled, llm_prompt_tokens, llm_requests_total, log
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed
 
@@ -147,6 +147,24 @@ def _error(status: int, message: str, err_type: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"message": message, "type": err_type}})
 
 
+def _trace_context(
+    model_name: str,
+    request_model: str,
+    request_kind: str,
+    request_id: str = "",
+    *,
+    extra: dict[str, object] | None = None,
+) -> RequestTraceContext:
+    return RequestTraceContext(
+        logical_model=model_name,
+        request_model=request_model,
+        request_kind=request_kind,
+        trace_bodies=is_trace_bodies_enabled(),
+        request_id=request_id,
+        extra=extra or {},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # OpenAI surface
 # --------------------------------------------------------------------------- #
@@ -168,6 +186,19 @@ async def _stream_chat(model, messages, tools, options, model_name: str) -> Stre
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
+    trace_ctx = _trace_context(
+        model.name,
+        model_name,
+        "chat",
+        extra={
+            "agentproxy.messages": messages,
+            "agentproxy.tools": tools or [],
+            "agentproxy.options": options,
+        }
+        if is_trace_bodies_enabled()
+        else None,
+    )
+    tracer = get_tracer()
 
     async def gen() -> AsyncIterator[str]:
         base = {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model_name}
@@ -176,16 +207,29 @@ async def _stream_chat(model, messages, tools, options, model_name: str) -> Stre
         yield f"data: {json.dumps(first)}\n\n"
         finish = "stop"
         try:
-            async for chunk in resilience.dispatch_stream(model, messages, tools=tools, options=options):
-                msg = chunk.get("message") or {}
-                piece = msg.get("content") or ""
-                if piece:
-                    delta = {**base, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}
-                    yield f"data: {json.dumps(delta)}\n\n"
-                if chunk.get("done"):
-                    finish = "length" if chunk.get("done_reason") == "length" else "stop"
+            if tracer is None:
+                async for chunk in resilience.dispatch_stream(model, messages, tools=tools, options=options, trace_ctx=trace_ctx):
+                    msg = chunk.get("message") or {}
+                    piece = msg.get("content") or ""
+                    if piece:
+                        delta = {**base, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}
+                        yield f"data: {json.dumps(delta)}\n\n"
+                    if chunk.get("done"):
+                        finish = "length" if chunk.get("done_reason") == "length" else "stop"
+            else:
+                with tracer.start_as_current_span("request.chat") as span:
+                    for key, value in trace_ctx.attrs().items():
+                        span.set_attribute(key, value)
+                    async for chunk in resilience.dispatch_stream(model, messages, tools=tools, options=options, trace_ctx=trace_ctx):
+                        msg = chunk.get("message") or {}
+                        piece = msg.get("content") or ""
+                        if piece:
+                            delta = {**base, "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}]}
+                            yield f"data: {json.dumps(delta)}\n\n"
+                        if chunk.get("done"):
+                            finish = "length" if chunk.get("done_reason") == "length" else "stop"
         except AllBackendsFailed as exc:
-            log.warning("stream.failed", model=model_name, error=str(exc))
+            log.warning("stream.failed", **trace_ctx.attrs(), error=str(exc), outcome="failed")
             finish = "stop"
         final = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
         yield f"data: {json.dumps(final)}\n\n"
@@ -216,21 +260,47 @@ async def chat_completions(request: Request) -> Response:
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
+    trace_ctx = _trace_context(
+        model.name,
+        model_name,
+        "chat",
+        request.headers.get("x-request-id", ""),
+        extra={
+            "agentproxy.messages": messages,
+            "agentproxy.tools": tools or [],
+            "agentproxy.options": options,
+        }
+        if is_trace_bodies_enabled()
+        else None,
+    )
+    tracer = get_tracer()
 
     if stream:
         llm_requests_total.labels(logical_model=model.name, outcome="stream").inc()
         return await _stream_chat(model, messages, tools, options, model.name)
 
     try:
-        result = await get_queue().submit(model, messages, tools, options)
+        if tracer is None:
+            result = await get_queue().submit(model, messages, tools, options, trace_ctx=trace_ctx)
+        else:
+            with tracer.start_as_current_span("request.chat") as span:
+                for key, value in trace_ctx.attrs().items():
+                    span.set_attribute(key, value)
+                result = await get_queue().submit(model, messages, tools, options, trace_ctx=trace_ctx)
+                span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+                span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+                span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
+        log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
+        log.warning("request.failed", **trace_ctx.attrs(), outcome="failed", error=str(exc))
         return _error(502, str(exc), "upstream_error")
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+    log.info("request.ok", **trace_ctx.attrs(), outcome="ok")
     return JSONResponse(content=_chat_completion_response(model.name, result))
 
 
@@ -259,17 +329,37 @@ async def completions(request: Request) -> Response:
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
+    trace_ctx = _trace_context(
+        model.name,
+        model_name,
+        "completions",
+        request.headers.get("x-request-id", ""),
+        extra={"agentproxy.prompt": prompt, "agentproxy.options": options} if is_trace_bodies_enabled() else None,
+    )
+    tracer = get_tracer()
 
     try:
-        result = await get_queue().submit(model, messages, None, options)
+        if tracer is None:
+            result = await get_queue().submit(model, messages, None, options, trace_ctx=trace_ctx)
+        else:
+            with tracer.start_as_current_span("request.completions") as span:
+                for key, value in trace_ctx.attrs().items():
+                    span.set_attribute(key, value)
+                result = await get_queue().submit(model, messages, None, options, trace_ctx=trace_ctx)
+                span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+                span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+                span.set_attribute("response.finish_reasons", [result.done_reason] if result.done_reason else [])
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
+        log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
+        log.warning("request.failed", **trace_ctx.attrs(), outcome="failed", error=str(exc))
         return _error(502, str(exc), "upstream_error")
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+    log.info("request.ok", **trace_ctx.attrs(), outcome="ok")
     return JSONResponse(
         content={
             "id": f"cmpl-{uuid.uuid4().hex}",

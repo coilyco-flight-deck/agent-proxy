@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import dataclass, field
 
 import structlog
 from prometheus_client import Counter, Gauge, Histogram
@@ -102,6 +103,44 @@ def _configure_otel(service_name: str, endpoint: str):
 def get_tracer():
     """The configured tracer, or None if OTel is not wired."""
     return _tracer
+
+
+def is_trace_bodies_enabled() -> bool:
+    return get_settings().trace_bodies
+
+
+@dataclass(frozen=True)
+class RequestTraceContext:
+    logical_model: str
+    request_model: str
+    request_kind: str
+    trace_bodies: bool = False
+    request_id: str = ""
+    extra: dict[str, object] = field(default_factory=dict)
+
+    def attrs(self) -> dict[str, object]:
+        data: dict[str, object] = {
+            "agentproxy.logical_model": self.logical_model,
+            "gen_ai.request.model": self.request_model,
+            "agentproxy.request_kind": self.request_kind,
+        }
+        if self.request_id:
+            data["agentproxy.request_id"] = self.request_id
+        data.update(self.extra)
+        return data
+
+
+def request_log_fields(ctx: RequestTraceContext, **fields: object) -> dict[str, object]:
+    out = {
+        "logical_model": ctx.logical_model,
+        "request_model": ctx.request_model,
+        "request_kind": ctx.request_kind,
+    }
+    if ctx.request_id:
+        out["request_id"] = ctx.request_id
+    out.update(ctx.extra)
+    out.update(fields)
+    return out
 
 
 def _configure_sentry(dsn: str, service_name: str) -> None:

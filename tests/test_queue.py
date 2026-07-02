@@ -26,7 +26,7 @@ async def test_worker_delivers_result(monkeypatch):
     from app import resilience
     from app.upstream import UpstreamResult
 
-    async def fake_dispatch(model, messages, tools=None, options=None):
+    async def fake_dispatch(model, messages, tools=None, options=None, trace_ctx=None):
         return UpstreamResult(model="t", content="hello")
 
     monkeypatch.setattr(resilience, "dispatch", fake_dispatch)

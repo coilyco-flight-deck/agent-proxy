@@ -77,6 +77,8 @@ secret is committed. Key knobs:
   resilience knobs.
 * `PROXY_SENTRY_DSN`, `PROXY_OTEL_EXPORTER_OTLP_ENDPOINT` - observability. Both
   degrade to no-ops when unset.
+* `PROXY_TRACE_BODIES` - opt-in request/response body capture for local OTLP
+  backends. Defaults to off so exported spans and logs stay metadata-only.
 
 ### Per-model num_ctx
 
