@@ -1,11 +1,47 @@
 """Token counting, context budgeting, and self-verification helpers."""
 
-from app.analysis import apply_context_budget, count_tokens, verify_action_claim
+from app import obs
+from app.analysis import (
+    apply_context_budget,
+    count_message_tokens,
+    count_tokens,
+    fit_to_budget,
+    verify_action_claim,
+)
 
 
 def test_count_tokens_nonzero():
     assert count_tokens("hello world") > 0
     assert count_tokens("") == 0
+
+
+def test_count_tokens_accepts_message_list():
+    msgs = [{"role": "user", "content": "hello world"}]
+    assert count_tokens(msgs) == count_message_tokens(msgs) > 0
+
+
+def test_fit_to_budget_trims_over_budget_prompt():
+    filler = "word " * 500  # ~500 tokens each
+    msgs = [
+        {"role": "system", "content": "SYSTEM FRAMING"},
+        {"role": "user", "content": "old turn 1 " + filler},
+        {"role": "assistant", "content": "old answer 1 " + filler},
+        {"role": "user", "content": "the live question"},
+    ]
+    num_ctx = 600
+
+    metric = obs.llm_truncation_avoided_total.labels(logical_model="fit-test")
+    before = metric._value.get()
+
+    out = fit_to_budget(msgs, num_ctx, logical_model="fit-test")
+
+    # The trimmed prompt fits the safe fraction of the budget.
+    assert count_tokens(out) <= int(num_ctx * 0.9)
+    # The system framing survives and the live turn is preserved.
+    assert any(m["role"] == "system" and m["content"] == "SYSTEM FRAMING" for m in out)
+    assert out[-1]["content"] == "the live question"
+    # The counter incremented exactly once.
+    assert metric._value.get() == before + 1
 
 
 def test_under_budget_is_untouched():
