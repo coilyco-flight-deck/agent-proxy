@@ -67,6 +67,10 @@ def test_list_models(client):
 
 
 def test_chat_completion_openai_shape(client):
+    # Faked dispatch (upstream.chat -> fake ollama reply) must come back shaped to
+    # the full OpenAI chat.completion schema this step (#10) locks in: an assistant
+    # message with content, a stop finish_reason, and a coherent usage block where
+    # total_tokens is the sum of the prompt/completion counts.
     resp = client.post(
         "/v1/chat/completions",
         json={"model": "fast", "messages": [{"role": "user", "content": "capital of France?"}]},
@@ -74,9 +78,16 @@ def test_chat_completion_openai_shape(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["object"] == "chat.completion"
-    assert body["choices"][0]["message"]["content"] == "Paris"
-    assert body["choices"][0]["finish_reason"] == "stop"
-    assert body["usage"]["prompt_tokens"] == 42
+    assert body["model"] == "fast"
+    choice = body["choices"][0]
+    assert choice["index"] == 0
+    assert choice["message"]["role"] == "assistant"
+    assert choice["message"]["content"] == "Paris"
+    assert choice["finish_reason"] == "stop"
+    usage = body["usage"]
+    assert usage["prompt_tokens"] == 42
+    assert usage["completion_tokens"] == 3
+    assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
 
 def test_chat_completion_uses_tracing(monkeypatch):
