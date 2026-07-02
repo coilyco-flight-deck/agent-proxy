@@ -1,12 +1,12 @@
 """
 Upstream client (leg 02 "upstream client", leg 04 step 2).
 
-Forwards a chat/completion to a backend's **native ollama** API
-(``/api/chat`` or ``/api/generate``) with ``options.num_ctx`` injected. Injecting
-the correct per-model ``num_ctx`` is the highest-value fix: it removes the silent
-32k left-truncation that every ``/v1`` OpenAI-compatible harness rides into
-(leg 01). The client speaks ollama natively so it controls ``options`` the way
-the OpenAI-compatible passthrough cannot.
+Forwards a chat/completion to a backend's native API with the safe model
+context injected when that backend accepts it. Ollama backends speak
+``/api/chat`` or ``/api/generate`` and take ``options.num_ctx``. OpenAI-shaped
+backends like llama-server speak ``/v1/chat/completions`` and carry the context
+at launch, so the client skips injection and normalizes the response back to the
+proxy's canonical internal shape.
 """
 
 from __future__ import annotations
@@ -68,6 +68,18 @@ def _inject_options(base: dict[str, Any] | None, num_ctx: int) -> dict[str, Any]
     return opts
 
 
+def _chat_path(backend: Backend) -> str:
+    if backend.chat_path:
+        return backend.chat_path
+    return "/api/chat" if backend.dialect == "ollama" else "/v1/chat/completions"
+
+
+def _health_path(backend: Backend) -> str:
+    if backend.health_path:
+        return backend.health_path
+    return "/api/version" if backend.dialect == "ollama" else "/health"
+
+
 def _timeout(backend: Backend) -> httpx.Timeout:
     t = backend.timeout if backend.timeout is not None else get_settings().request_timeout
     # No read timeout cap beyond t; connect kept short so a dead backend fails fast.
@@ -88,6 +100,21 @@ def _parse_chat_response(data: dict[str, Any]) -> UpstreamResult:
     )
 
 
+def _parse_openai_chat_response(data: dict[str, Any]) -> UpstreamResult:
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    return UpstreamResult(
+        model=data.get("model", ""),
+        content=message.get("content", "") or "",
+        thinking=message.get("reasoning_content", "") or message.get("thinking", "") or "",
+        tool_calls=message.get("tool_calls", []) or [],
+        prompt_eval_count=int((data.get("usage") or {}).get("prompt_tokens", 0) or 0),
+        eval_count=int((data.get("usage") or {}).get("completion_tokens", 0) or 0),
+        done_reason=choice.get("finish_reason", "stop") or "stop",
+        raw=data,
+    )
+
+
 async def chat(
     backend: Backend,
     num_ctx: int,
@@ -96,21 +123,20 @@ async def chat(
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
 ) -> UpstreamResult:
-    """Non-streaming native ``/api/chat`` call with ``num_ctx`` injected."""
-    body: dict[str, Any] = {
-        "model": backend.ollama_tag,
-        "messages": messages,
-        "stream": False,
-        "options": _inject_options(options, num_ctx),
-    }
+    """Non-streaming upstream call with the safe context applied where valid."""
+    body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": False}
+    if backend.injects_num_ctx:
+        body["options"] = _inject_options(options, num_ctx)
+    elif options:
+        body.update(options)
     if tools:
         body["tools"] = tools
     try:
-        resp = await get_client().post(f"{backend.url}/api/chat", json=body, timeout=_timeout(backend))
+        resp = await get_client().post(f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend))
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise UpstreamError(f"{backend.name}: {exc}") from exc
-    return _parse_chat_response(resp.json())
+    return _parse_chat_response(resp.json()) if backend.dialect == "ollama" else _parse_openai_chat_response(resp.json())
 
 
 async def chat_stream(
@@ -121,27 +147,45 @@ async def chat_stream(
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Streaming native ``/api/chat`` - yields raw ollama NDJSON chunks."""
-    body: dict[str, Any] = {
-        "model": backend.ollama_tag,
-        "messages": messages,
-        "stream": True,
-        "options": _inject_options(options, num_ctx),
-    }
+    """Streaming upstream call, normalized to the proxy's internal chunk shape."""
+    body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": True}
+    if backend.injects_num_ctx:
+        body["options"] = _inject_options(options, num_ctx)
+    elif options:
+        body.update(options)
     if tools:
         body["tools"] = tools
     try:
         async with get_client().stream(
-            "POST", f"{backend.url}/api/chat", json=body, timeout=_timeout(backend)
+            "POST", f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend)
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.strip():
                     continue
                 try:
-                    yield json.loads(line)
+                    payload = json.loads(line)
                 except json.JSONDecodeError:
+                    try:
+                        payload = json.loads(line.removeprefix("data:").strip())
+                    except json.JSONDecodeError:
+                        continue
+                if backend.dialect == "ollama":
+                    yield payload
                     continue
+                choice = (payload.get("choices") or [{}])[0]
+                delta = choice.get("delta") or {}
+                message: dict[str, Any] = {}
+                if content := delta.get("content"):
+                    message["content"] = content
+                if reasoning := delta.get("reasoning_content"):
+                    message["thinking"] = reasoning
+                if tool_calls := delta.get("tool_calls"):
+                    message["tool_calls"] = tool_calls
+                out: dict[str, Any] = {"message": message, "done": choice.get("finish_reason") is not None}
+                if choice.get("finish_reason"):
+                    out["done_reason"] = choice.get("finish_reason")
+                yield out
     except httpx.HTTPError as exc:
         raise UpstreamError(f"{backend.name}: {exc}") from exc
 
@@ -154,12 +198,11 @@ async def generate(
     options: dict[str, Any] | None = None,
 ) -> UpstreamResult:
     """Non-streaming native ``/api/generate`` for the ``/v1/completions`` surface."""
-    body: dict[str, Any] = {
-        "model": backend.ollama_tag,
-        "prompt": prompt,
-        "stream": False,
-        "options": _inject_options(options, num_ctx),
-    }
+    body: dict[str, Any] = {"model": backend.ollama_tag, "prompt": prompt, "stream": False}
+    if backend.injects_num_ctx:
+        body["options"] = _inject_options(options, num_ctx)
+    elif options:
+        body.update(options)
     try:
         resp = await get_client().post(f"{backend.url}/api/generate", json=body, timeout=_timeout(backend))
         resp.raise_for_status()
@@ -179,7 +222,7 @@ async def generate(
 async def health(backend: Backend) -> bool:
     """Cheap liveness probe used by the circuit breaker's half-open recovery."""
     try:
-        resp = await get_client().get(f"{backend.url}/api/version", timeout=httpx.Timeout(5.0))
+        resp = await get_client().get(f"{backend.url}{_health_path(backend)}", timeout=httpx.Timeout(5.0))
         return resp.status_code == 200
     except httpx.HTTPError:
         return False

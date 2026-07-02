@@ -16,6 +16,7 @@ and everything else to a conservative 32768.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
 from .config import get_settings
@@ -27,11 +28,15 @@ CONSERVATIVE_NUM_CTX = 32768  # Everything else until leg-03 locks a value.
 
 @dataclass(frozen=True)
 class Backend:
-    """One upstream target: an ollama base URL plus the tag to request there."""
+    """One upstream target and the dialect it speaks."""
 
     name: str
     url: str
     ollama_tag: str
+    dialect: str = "ollama"
+    chat_path: str | None = None
+    health_path: str | None = None
+    injects_num_ctx: bool = True
     timeout: float | None = None  # None -> use the global request_timeout.
 
 
@@ -56,6 +61,19 @@ def _default_registry() -> dict[str, LogicalModel]:
     def tower_backend(tag: str) -> Backend:
         return Backend(name="tower-3026", url=tower, ollama_tag=tag)
 
+    def llama_backend(tag: str) -> Backend:
+        parts = urlsplit(tower)
+        llama_url = urlunsplit((parts.scheme, f"{parts.hostname}:8080", "", "", ""))
+        return Backend(
+            name="tower-llama-8080",
+            url=llama_url,
+            ollama_tag=tag,
+            dialect="openai",
+            chat_path="/v1/chat/completions",
+            health_path="/health",
+            injects_num_ctx=False,
+        )
+
     # Tags chosen to exist on the tower today; a deploy override can repoint them.
     return {
         "fast-think": LogicalModel("fast-think", FAST_THINK_NUM_CTX, [tower_backend("qwen3:30b-a3b")]),
@@ -63,6 +81,8 @@ def _default_registry() -> dict[str, LogicalModel]:
         "ctx-think": LogicalModel("ctx-think", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3:32b")]),
         "ctx": LogicalModel("ctx", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3-coder:30b")]),
         "tune": LogicalModel("tune", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3:30b-a3b")]),
+        "gpt-oss-120b": LogicalModel("gpt-oss-120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]),
+        "gpt-oss:120b": LogicalModel("gpt-oss:120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]),
     }
 
 
@@ -81,6 +101,10 @@ def _apply_overrides(base: dict[str, LogicalModel], overrides: dict[str, Any]) -
                 name=b["name"],
                 url=b["url"].rstrip("/"),
                 ollama_tag=b["ollama_tag"],
+                dialect=b.get("dialect", "ollama"),
+                chat_path=b.get("chat_path"),
+                health_path=b.get("health_path"),
+                injects_num_ctx=b.get("injects_num_ctx", True),
                 timeout=b.get("timeout"),
             )
             for b in backends_spec

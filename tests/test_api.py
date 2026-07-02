@@ -36,7 +36,7 @@ def test_metrics_exposed(client):
 def test_list_models(client):
     data = client.get("/v1/models").json()
     ids = {m["id"] for m in data["data"]}
-    assert {"fast-think", "fast", "ctx-think", "ctx", "tune"} <= ids
+    assert {"fast-think", "fast", "ctx-think", "ctx", "tune", "gpt-oss-120b", "gpt-oss:120b"} <= ids
 
 
 def test_chat_completion_openai_shape(client):

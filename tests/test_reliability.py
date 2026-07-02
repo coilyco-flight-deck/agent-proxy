@@ -1,8 +1,6 @@
 """Tests for the reliability harness."""
 
-import argparse
-import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # We'll add a simple test to verify the main functions work properly
 # This is a basic check - not comprehensive due to the environment limitations

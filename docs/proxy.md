@@ -25,8 +25,10 @@ A harness sends an OpenAI-shaped request to a **logical** model name. The proxy:
    every response. Transport errors trip a per-backend circuit breaker; a merely
    bad generation is rerolled but does not.
 5. the **upstream client** (`app/upstream.py`) forwards to the backend's native
-   ollama `/api/chat` with `options.num_ctx` injected - the caller can never
-   override it.
+   API. Ollama backends use `/api/chat` with `options.num_ctx` injected. OpenAI
+   backends like the llama-server gpt-oss target use `/v1/chat/completions`
+   without injection, then normalize their response back to the proxy's
+   canonical shape.
 6. the result is shaped back to the OpenAI schema (`app/main.py`). Reasoning-model
    thought is surfaced as `reasoning_content`.
 
@@ -63,8 +65,9 @@ secret is committed. Key knobs:
 
 * `PROXY_TOWER_BASE_URL` - the primary ollama base URL. If unset, the tower FQDN
   resolves from SSM `/coilysiren/kai-tower-3026/tailnet-fqdn` at boot.
-* `PROXY_MODELS_JSON` / `PROXY_MODELS_FILE` - override the logical-model table (a
-  ConfigMap later) without touching code.
+* `PROXY_MODELS_JSON` / `PROXY_MODELS_FILE` can also add the `gpt-oss-120b`
+  logical model or override its backend URL, path, or dialect if deployment
+  needs to move the llama-server endpoint.
 * `PROXY_WORKER_COUNT`, `PROXY_QUEUE_MAXSIZE` - queue / worker sizing.
 * `PROXY_MAX_RETRIES`, `PROXY_CIRCUIT_FAIL_THRESHOLD`, `PROXY_CIRCUIT_COOLDOWN` -
   resilience knobs.
