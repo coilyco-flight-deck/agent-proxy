@@ -25,6 +25,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections import Counter
+import datetime
 
 from _endpoints import proxy_base_url, tower_base_url
 
@@ -98,7 +99,7 @@ def _score_turn(url: str, model: str, messages: list, expect_tool: bool) -> tupl
     return True, "ok"
 
 
-def run(target: str, turns: int) -> None:
+def run(target: str, turns: int) -> tuple[int, Counter[str], dict]:
     url, model = _endpoint_and_model(target)
     messages = [{"role": "system", "content": _SYSTEM}]
     reasons: Counter[str] = Counter()
@@ -125,6 +126,9 @@ def run(target: str, turns: int) -> None:
     pct = 100.0 * usable / turns if turns else 0.0
     print(f"\ntarget={target} model={model} runs={turns} reliability={pct:.0f}%")
     print("failure reasons:", dict(reasons))
+    
+    # Return results for reporting
+    return usable, reasons, {"target": target, "model": model, "runs": turns, "reliability": pct}
 
 
 def main() -> int:
@@ -132,7 +136,32 @@ def main() -> int:
     ap.add_argument("--target", choices=["direct", "proxy"], default="proxy")
     ap.add_argument("--turns", type=int, default=6)
     args = ap.parse_args()
-    run(args.target, args.turns)
+    
+    # Run the reliability test and get results
+    usable, reasons, result_info = run(args.target, args.turns)
+    
+    # Create a durable report
+    timestamp = datetime.datetime.now().isoformat()
+    report_content = f"""Reliability Test Report
+========================
+
+Run timestamp: {timestamp}
+Target: {result_info['target']}
+Model: {result_info['model']}
+Turns: {result_info['runs']}
+Reliability: {result_info['reliability']:.0f}%
+
+Failure reasons:
+"""
+    for reason, count in reasons.items():
+        report_content += f"  {reason}: {count}\n"
+    
+    report_path = f"reliability_report_{result_info['target']}_{timestamp.replace(':', '-')}.txt"
+    with open(report_path, "w") as f:
+        f.write(report_content)
+    
+    print(f"\nReport saved to: {report_path}")
+    
     return 0
 
 
