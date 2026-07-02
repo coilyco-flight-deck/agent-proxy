@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
 
     # Queue / worker sizing (leg 04 step 3).
-    queue_maxsize: int = Field(default=64)
+    queue_maxsize: int = Field(default=100)
     worker_count: int = Field(default=4)
 
     # Resilience knobs (leg 04 step 4).

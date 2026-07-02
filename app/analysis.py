@@ -23,6 +23,11 @@ from .obs import llm_truncation_avoided_total
 # for budgeting; we reserve headroom rather than aim for an exact match.
 _PER_MESSAGE_OVERHEAD = 4
 
+# The safe fraction of a model's num_ctx a prompt may fill before the guard
+# trims. The remaining 10% is reserved headroom for the response and the chat
+# template's framing tokens.
+_SAFE_FRACTION = 0.9
+
 _ACTION_LEAD_INS = (
     "i will",
     "i'll",
@@ -80,10 +85,19 @@ def _encoder():
     return tiktoken.get_encoding("cl100k_base")
 
 
-def count_tokens(text: str) -> int:
-    if not text:
+def count_tokens(value: str | list[dict[str, Any]]) -> int:
+    """Count tokens in a bare string or a full chat-message list.
+
+    A message list is summed with the same per-message overhead the budget
+    guard reserves, so a caller can ask "how big is this prompt" (the leg-04
+    step-5 ``count_tokens(messages)`` surface) without reaching for the
+    internal helper. A bare string is encoded directly.
+    """
+    if isinstance(value, list):
+        return count_message_tokens(value)
+    if not value:
         return 0
-    return len(_encoder().encode(text))
+    return len(_encoder().encode(value))
 
 
 def _message_text(message: dict[str, Any]) -> str:
@@ -186,3 +200,22 @@ def apply_context_budget(
 
     llm_truncation_avoided_total.labels(logical_model=logical_model).inc()
     return result, new_total, True
+
+
+def fit_to_budget(
+    messages: list[dict[str, Any]],
+    num_ctx: int,
+    logical_model: str = "",
+) -> list[dict[str, Any]]:
+    """Return ``messages`` trimmed to fit ``_SAFE_FRACTION`` of ``num_ctx``.
+
+    The leg-04 step-5 public surface: an over-budget prompt never reaches the
+    model. It reserves 10% of ``num_ctx`` as headroom, keeps every ``system``
+    message and the latest user turn, drops the oldest non-system turns until it
+    fits, and increments ``llm_truncation_avoided_total`` when it trims. Thin
+    wrapper over :func:`apply_context_budget` that returns just the message
+    list; callers wanting the token count or trim flag use that directly.
+    """
+    headroom = num_ctx - int(num_ctx * _SAFE_FRACTION)
+    fitted, _tokens, _trimmed = apply_context_budget(logical_model, messages, num_ctx, headroom)
+    return fitted

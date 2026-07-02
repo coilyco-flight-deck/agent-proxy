@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import Counter
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, AsyncIterator
@@ -87,6 +88,16 @@ def _is_degenerate_repetition(text: str) -> bool:
     # A single character/short substring repeated to fill the reply.
     if len(set(stripped)) <= 2 and len(stripped) >= 40:
         return True
+    # A whole multi-word line echoed far past any legitimate need - a stuck
+    # decoder loop. Distinct from the token check above, which a line carrying
+    # several distinct words slips past. ">20" tracks the "~20x" acceptance
+    # threshold; distinct lines (a real list, numbered steps) never collapse
+    # onto one bucket and so never trip it.
+    lines = [ln.strip() for ln in stripped.splitlines() if ln.strip()]
+    if len(lines) > 20:
+        _, count = Counter(lines).most_common(1)[0]
+        if count > 20:
+            return True
     return False
 
 

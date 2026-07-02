@@ -158,3 +158,52 @@ def reset_registry() -> None:
     """Test hook: force a rebuild on next access."""
     global _registry
     _registry = None
+
+
+# --- Flat-dict view (leg 04 step 2 acceptance API) --------------------------
+#
+# A logical name resolves to a plain ``{"backend_url", "ollama_tag", "num_ctx"}``
+# dict - the primary backend of the registry entry, flattened. This is the small
+# stable surface the rest of the proxy and its tests read; the ``Registry`` above
+# carries the full fallback chain and dialect detail behind it.
+
+
+def _flat_view(model: LogicalModel) -> dict[str, Any]:
+    """Flatten a :class:`LogicalModel` to its primary-backend dict."""
+    primary = model.primary
+    return {
+        "backend_url": primary.url,
+        "ollama_tag": primary.ollama_tag,
+        "num_ctx": model.num_ctx,
+    }
+
+
+def get_model(name: str) -> dict[str, Any] | None:
+    """Return the flat ``{backend_url, ollama_tag, num_ctx}`` dict for ``name``.
+
+    Returns ``None`` for an unknown logical name (callers that want a hard error
+    can index the result or use :meth:`Registry.get`).
+    """
+    model = get_registry().get(name)
+    if model is None:
+        return None
+    return _flat_view(model)
+
+
+def list_models() -> list[str]:
+    """The logical names the registry currently serves."""
+    return get_registry().names()
+
+
+class _LogicalModelsView(dict):
+    """Live mapping of logical name -> flat dict, resolved from the registry.
+
+    Kept as a dict subclass so ``LOGICAL_MODELS[name]`` and iteration read as a
+    plain table while still reflecting any deploy override applied at boot.
+    """
+
+    def __init__(self) -> None:
+        super().__init__({m.name: _flat_view(m) for m in get_registry().all()})
+
+
+LOGICAL_MODELS: dict[str, dict[str, Any]] = _LogicalModelsView()
