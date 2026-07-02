@@ -40,7 +40,9 @@ class Job:
     tools: list[dict[str, Any]] | None
     options: dict[str, Any] | None
     trace_ctx: RequestTraceContext | None = None
-    future: "asyncio.Future[UpstreamResult]" = field(default=None)  # set on submit
+    # Defaulted to None only so it can trail trace_ctx in the dataclass; submit()
+    # always constructs a Job with a live future, so the awaiting paths guard it.
+    future: "asyncio.Future[UpstreamResult] | None" = field(default=None)
 
 
 class WorkQueue:
@@ -124,9 +126,13 @@ class WorkQueue:
             return result
 
     async def _worker(self, idx: int) -> None:
+        # start() creates the queue before spawning any worker, so it is bound
+        # for the worker's whole lifetime; bind it locally so the type narrows.
+        queue = self._queue
+        assert queue is not None
         while True:
-            job = await self._queue.get()
-            llm_queue_depth.set(self._queue.qsize())
+            job = await queue.get()
+            llm_queue_depth.set(queue.qsize())
             try:
                 result = await resilience.dispatch(
                     job.model,
@@ -135,13 +141,13 @@ class WorkQueue:
                     options=job.options,
                     trace_ctx=job.trace_ctx,
                 )
-                if not job.future.done():
+                if job.future is not None and not job.future.done():
                     job.future.set_result(result)
             except Exception as exc:  # deliver the failure to the awaiting route
-                if not job.future.done():
+                if job.future is not None and not job.future.done():
                     job.future.set_exception(exc)
             finally:
-                self._queue.task_done()
+                queue.task_done()
 
 
 _queue: WorkQueue | None = None

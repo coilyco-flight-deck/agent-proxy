@@ -447,7 +447,10 @@ def main() -> None:
     config.loglevel = settings.log_level.upper()
 
     log.info("serve.start", bind=config.bind[0])
-    asyncio.run(serve(app, config))
+    # hypercorn types `serve` against its own narrow ASGIFramework protocol; a
+    # FastAPI app is a valid ASGI3 callable it accepts at runtime, so the
+    # mismatch is a stub-strictness false positive, not a real defect.
+    asyncio.run(serve(app, config))  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

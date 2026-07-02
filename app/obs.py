@@ -155,15 +155,17 @@ class RequestTraceContext:
         return data
 
 
-def request_log_fields(ctx: RequestTraceContext, **fields: object) -> dict[str, object]:
-    out = {
-        "logical_model": ctx.logical_model,
-        "request_model": ctx.request_model,
-        "request_kind": ctx.request_kind,
-    }
-    if ctx.request_id:
-        out["request_id"] = ctx.request_id
-    out.update(ctx.extra)
+def request_log_fields(ctx: RequestTraceContext | None, **fields: object) -> dict[str, object]:
+    # ctx is optional at the call sites (dispatch/dispatch_stream default it to
+    # None); when absent, emit just the ad-hoc fields rather than crashing.
+    out: dict[str, object] = {}
+    if ctx is not None:
+        out["logical_model"] = ctx.logical_model
+        out["request_model"] = ctx.request_model
+        out["request_kind"] = ctx.request_kind
+        if ctx.request_id:
+            out["request_id"] = ctx.request_id
+        out.update(ctx.extra)
     out.update(fields)
     return out
 
