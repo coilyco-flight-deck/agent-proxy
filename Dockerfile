@@ -16,8 +16,11 @@ RUN pip install --no-cache-dir uv && \
 # Copy application code
 COPY . .
 
+# Make sure the virtual environment's bin is in PATH
+ENV PATH="/app/.venv/bin:$PATH"
+
 # Expose the proxy port
 EXPOSE 8080
 
-# Define entrypoint for service
+# Define entrypoint for service  
 CMD ["python", "-m", "app.main"]
