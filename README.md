@@ -47,7 +47,16 @@ These are named, sequenced, and durable in `docs/ROADMAP.md`. None is implemente
 
 ## Status
 
-Seeded. Phase 1 is not yet implemented. The first implementer follows aosh leg `04-headless-proxy-build.md`.
+Phase 1 is built and runs locally (aosh leg `04-headless-proxy-build.md`). The core `num_ctx` fix is proven end to end against the live tower: a 55k-token request to logical `fast-think` returns `prompt_eval_count=49151`, not 32767. See `docs/proxy.md` for the run/config/proof walkthrough. The capability phases remain future work.
+
+Quickstart (with a tower reachable):
+
+```
+ward sync                                   # uv sync
+PROXY_TOWER_BASE_URL=http://<tower>:11434 ward serve   # run the proxy on :8080
+ward test                                   # the test suite
+TOWER=<tower> ward proof                     # prove the 32k cliff is gone
+```
 
 ## Source of truth and pointers
 
