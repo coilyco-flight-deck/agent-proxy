@@ -49,6 +49,21 @@ def test_repetition_rejected():
     assert not ok and reason == "repetition"
 
 
+def test_repeated_line_rejected():
+    # A whole multi-word line looped 50x is a stuck decoder - the per-token
+    # check misses it (the line carries several distinct words), so the
+    # line-level check must catch it.
+    ok, reason = validate_response(_r("The quick brown fox jumps over it.\n" * 50))
+    assert not ok and reason == "repetition"
+
+
+def test_varied_multiline_accepted():
+    # A genuine numbered list of distinct lines must never be rerolled.
+    body = "\n".join(f"{i}. Do the distinct thing number {i} carefully." for i in range(30))
+    ok, reason = validate_response(_r(body))
+    assert ok and reason == "ok"
+
+
 def test_normal_answer_accepted():
     ok, reason = validate_response(_r("The capital of France is Paris."))
     assert ok and reason == "ok"
