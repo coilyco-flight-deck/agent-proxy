@@ -8,11 +8,16 @@ here - see the source-of-truth pointers in the README.
 
 ## Request path
 
-A harness sends an OpenAI-shaped request to a **logical** model name. The proxy:
+A harness sends an OpenAI-shaped request carrying the **real ollama tag** (e.g.
+`qwen3:4b`) as `model` - no logical indirection (issue #32). The proxy:
 
-1. **resolves** the logical name (`fast-think`, `fast`, `ctx-think`, `ctx`,
-   `tune`) to a per-model safe `num_ctx` and an ordered fallback chain
-   (`app/models.py`).
+1. **resolves** the tag against the backend catalog (`app/models.py`): it reads
+   the backend's `/api/tags` once (cached), confirms the tag exists, and derives
+   a safe `num_ctx = min(context_length, ceiling) - headroom` from the model's
+   *real* `context_length`. An unknown tag (absent from a catalog it read) is a
+   404; if the backend is unreachable the tag is served fail-open with a
+   conservative window so a transient outage surfaces as a 502, not a false 404.
+   The ordered backend chain (tower plus any configured fallbacks) rides along.
 2. **guards the context budget** (`app/analysis.py`): counts prompt tokens and,
    if the prompt exceeds `num_ctx - headroom`, trims the oldest non-system turns,
    always keeping the system framing and the live turn. Increments
@@ -41,7 +46,8 @@ wants the full resilience guarantee uses the non-streaming path.
 * `POST /v1/chat/completions` - streaming and non-streaming.
 * `POST /v1/completions` - modeled as a single user turn so it rides the same
   resilience path.
-* `GET /v1/models` - lists the logical names.
+* `GET /v1/models` - lists the tags actually present on the backend (live from
+  `/api/tags`), not a static alias list.
 * `GET /healthz` - liveness for Caddy / k8s probes.
 * `GET /metrics` - prometheus exposition.
 
@@ -68,10 +74,16 @@ SSM for the tower FQDN and secrets (`app/config.py`). Nothing is hardcoded and n
 secret is committed. Key knobs:
 
 * `PROXY_TOWER_BASE_URL` - the primary ollama base URL. If unset, the tower FQDN
-  resolves from SSM `/coilysiren/kai-tower-3026/tailnet-fqdn` at boot.
-* `PROXY_MODELS_JSON` / `PROXY_MODELS_FILE` can also add the `gpt-oss-120b`
-  logical model or override its backend URL, path, or dialect if deployment
-  needs to move the llama-server endpoint.
+  resolves from SSM `/coilysiren/kai-tower-3026/tailnet-fqdn` at boot. This is the
+  backend whose `/api/tags` is the catalog source of truth.
+* `PROXY_NUM_CTX_CEILING` - the VRAM-safe upper bound on the injected `num_ctx`
+  (default **49152**). A model advertising a huge window (`qwen3:4b` = 262144)
+  never allocates more KV cache than the tower can carry.
+* `PROXY_NUM_CTX_HEADROOM` - tokens reserved below the ceiling for the completion
+  (default **1024**).
+* `PROXY_BACKENDS_JSON` / `PROXY_BACKENDS_FILE` - a JSON array of backend specs
+  (`{"name","url","dialect"?,"chat_path"?,...}`, no tag - the tag comes from the
+  request) to supply a fallback chain beyond the single built-in tower backend.
 * `PROXY_WORKER_COUNT`, `PROXY_QUEUE_MAXSIZE` - queue / worker sizing.
 * `PROXY_MAX_RETRIES`, `PROXY_CIRCUIT_FAIL_THRESHOLD`, `PROXY_CIRCUIT_COOLDOWN` -
   resilience knobs.
@@ -80,23 +92,36 @@ secret is committed. Key knobs:
 * `PROXY_TRACE_BODIES` - opt-in request/response body capture for local OTLP
   backends. Defaults to off so exported spans and logs stay metadata-only.
 
-### Per-model num_ctx
+### Auto num_ctx from the model's real context window
 
-`fast-think` (Qwen3-A3B) defaults to **49152** (proven safe, leg 01); every other
-logical model defaults to a conservative **32768**. These are placeholders until
-the leg-03 benchmark locks per-model values, and a deploy overrides them via the
-model-table config above.
+The proxy no longer guesses `num_ctx` from a hand-maintained table (issue #32).
+Ollama's `/api/tags` reports each model's real `context_length` in
+`details.context_length` (confirmed live: `qwen3:8b` = 40960, `qwen3:4b` =
+262144). The proxy reads it once (cached), and injects
+
+```
+num_ctx = min(context_length, PROXY_NUM_CTX_CEILING) - PROXY_NUM_CTX_HEADROOM
+```
+
+so a model rides its own real window up to the VRAM-safe ceiling. With the
+defaults (ceiling 49152, headroom 1024): `qwen3:8b` -> 39936, `qwen3:4b` ->
+48128. The **caller can never override `num_ctx`** - upstream forces the derived
+value even if a client sends its own - which is the whole point of the proxy.
+
+The larger litellm-as-core re-core that supersedes this routing layer entirely
+is tracked in `coilyco-bridge/agentic-os-hardware#25` and is compatible with this
+phase-1 change.
 
 ## Running and proving locally
 
 ```
 ward sync                                             # uv sync (installs app + dev)
 PROXY_TOWER_BASE_URL=http://<tower>:11434 ward serve  # proxy on 127.0.0.1:8080
-ward test                                             # 26 tests, tower not required
+ward test                                             # offline suite, tower not required
 
-# with the proxy running and a tower reachable:
-TOWER=<tower> ward proof                               # 32767 (direct) vs 49151 (proxy)
-TOWER=<tower> ward reliability --target proxy --turns 6
+# with the proxy running and a tower reachable (pass a real ollama tag):
+TOWER=<tower> MODEL=qwen3-coder:30b ward proof        # 32767 (direct) vs num_ctx-injected (proxy)
+TOWER=<tower> MODEL=qwen3-coder:30b ward reliability --target proxy --turns 6
 ```
 
 `scripts/truncation_proof.py` reproduces the leg-01 truncation test through the

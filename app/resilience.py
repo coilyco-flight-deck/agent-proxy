@@ -29,7 +29,7 @@ from typing import Any, AsyncIterator
 
 from .config import get_settings
 from .analysis import verify_action_claim
-from .models import Backend, LogicalModel, get_registry
+from .models import Backend, LogicalModel, resolve
 from .obs import (
     RequestTraceContext,
     llm_circuit_state,
@@ -49,8 +49,8 @@ class AllBackendsFailed(Exception):
     """Every backend in the chain was exhausted or open."""
 
 
-class UnknownLogicalModel(Exception):
-    """``dispatch_resilient`` was handed a name the registry does not know."""
+class UnknownModel(Exception):
+    """``dispatch_resilient`` was handed a tag the backend catalog does not know."""
 
 
 # --------------------------------------------------------------------------- #
@@ -382,33 +382,34 @@ async def dispatch(
 
 
 async def dispatch_resilient(
-    logical_name: str,
+    model_name: str,
     messages: list[dict[str, Any]],
     *,
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
     trace_ctx: RequestTraceContext | None = None,
 ) -> UpstreamResult:
-    """Name-based front door to the resilient dispatch engine (leg 04 step 10).
+    """Tag-based front door to the resilient dispatch engine (leg 04 step 10).
 
-    Resolves ``logical_name`` against the registry's ordered backend chain and runs
-    :func:`dispatch`: retry-with-backoff on each live backend (``llm_retries_total``),
-    fallback to the next backend on exhaustion (``llm_fallbacks_total``), and response
-    validation on every attempt. A backend that always fails walks the chain and then
-    raises :class:`AllBackendsFailed` - a clean error, never a hang.
+    Resolves the real ollama ``model_name`` against the backend catalog (deriving
+    its safe ``num_ctx`` and fallback chain) and runs :func:`dispatch`:
+    retry-with-backoff on each live backend (``llm_retries_total``), fallback to
+    the next backend on exhaustion (``llm_fallbacks_total``), and response
+    validation on every attempt. A backend that always fails walks the chain and
+    then raises :class:`AllBackendsFailed` - a clean error, never a hang.
 
     Callers that already hold a resolved :class:`LogicalModel` - the worker, which
     resolves it at the route boundary for the 404 guard - call :func:`dispatch`
-    directly; callers that only carry the logical name string use this entry point.
+    directly; callers that only carry the tag string use this entry point.
     """
-    model = get_registry().get(logical_name)
+    model = await resolve(model_name)
     if model is None:
-        raise UnknownLogicalModel(logical_name)
+        raise UnknownModel(model_name)
     # The engine's retry/fallback logging always reads a trace context; a bare
     # caller that only had the name gets a minimal one built from it here.
     if trace_ctx is None:
         trace_ctx = RequestTraceContext(
-            logical_model=model.name, request_model=logical_name, request_kind="chat"
+            logical_model=model.name, request_model=model_name, request_kind="chat"
         )
     return await dispatch(model, messages, tools=tools, options=options, trace_ctx=trace_ctx)
 

@@ -31,12 +31,15 @@ body=$(curl -fsS "${BASE_URL}/healthz") || fail "/healthz request failed"
   || fail "/healthz body unexpected: $body"
 echo "  OK   /healthz -> $body"
 
-# 3. /v1/models is an OpenAI-shaped list with at least one model id.
+# 3. /v1/models is an OpenAI-shaped list. Its entries are now the tags the
+# backend actually serves (issue #32: live /api/tags, not a static alias list),
+# so a daemonless / tower-less boot correctly returns an empty data array. We
+# assert the list *shape* here, not a non-empty catalog, since this probe runs
+# with no backend reachable.
 models=$(curl -fsS "${BASE_URL}/v1/models") || fail "/v1/models request failed"
 { echo "$models" | grep -q '"object"' && echo "$models" | grep -q '"data"'; } \
   || fail "/v1/models shape unexpected: $models"
-echo "$models" | grep -q '"id"' || fail "/v1/models listed no models: $models"
-echo "  OK   /v1/models -> lists models"
+echo "  OK   /v1/models -> OpenAI-shaped list (entries are live backend tags)"
 
 # 4. /metrics is Prometheus exposition text.
 metrics=$(curl -fsS "${BASE_URL}/metrics") || fail "/metrics request failed"

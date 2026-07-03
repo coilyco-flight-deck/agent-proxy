@@ -1,29 +1,29 @@
 """
-Logical-model registry (leg 02 "logical routing", leg 04 step 2).
+Model catalog and ``num_ctx`` derivation (issue #32).
 
-A logical name (``fast-think``, ``fast``, ``ctx-think``, ``ctx``, ``tune``) maps
-to a per-model safe ``num_ctx`` and an ordered fallback chain of backends. The
-first backend is the primary (the 3026 tower); later entries are the siblings /
-CPU / API fallbacks the resilience layer walks on failure. A deploy can override
-the whole table via ``PROXY_MODELS_JSON`` / ``PROXY_MODELS_FILE`` (a ConfigMap
-later) without touching code.
+This retires the hand-maintained logical-model alias table. Harnesses now pass
+the **real ollama tag** (e.g. ``qwen3:4b``) as the request ``model`` - no
+logical indirection, no static tag/``num_ctx`` guesses that drift from what is
+actually pulled on a backend.
 
-Per-model ``num_ctx`` values: use the leg-03 benchmark results when they exist.
-Until then ``fast-think`` (Qwen3-A3B) defaults to 49152 (proven safe, leg 01)
-and everything else to a conservative 32768.
+The proxy instead reads each model's **real context window** from the backend's
+``/api/tags`` (``details.context_length``, confirmed live: ``qwen3:8b`` = 40960,
+``qwen3:4b`` = 262144), caches it, and derives a safe ceiling as
+``num_ctx = min(context_length, configured_ceiling) - headroom``. The caller can
+still never override ``num_ctx`` (upstream forces it) - that invariant is the
+whole wedge and stays.
+
+The larger litellm-as-core re-core that supersedes this routing layer entirely
+is tracked in ``coilyco-bridge/agentic-os-hardware#25`` and is compatible with
+this phase-1 change.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
 from .config import get_settings
-
-# Defaults per the leg-04 "Per-model num_ctx source" section.
-FAST_THINK_NUM_CTX = 49152  # Qwen3-A3B, proven safe (leg 01).
-CONSERVATIVE_NUM_CTX = 32768  # Everything else until leg-03 locks a value.
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,14 @@ class Backend:
 
 @dataclass
 class LogicalModel:
-    """A logical name, its safe context ceiling, and its fallback chain."""
+    """A resolved model: the requested tag, its derived safe ``num_ctx``, and the
+    ordered backend chain that serves it.
+
+    The name is kept for the ``logical_model`` observability label it feeds, but
+    there is no logical indirection any more - ``name`` is the real ollama tag
+    the harness asked for, flowing straight through to every backend's
+    ``ollama_tag``. The chain is the resilience layer's fallback order.
+    """
 
     name: str
     num_ctx: int
@@ -53,165 +60,149 @@ class LogicalModel:
         return self.backends[0]
 
 
-def _default_registry() -> dict[str, LogicalModel]:
-    """The built-in table. The primary backend for every model is the tower,
-    whose base URL resolves from env/SSM at boot (never hardcoded)."""
+# --------------------------------------------------------------------------- #
+# num_ctx derivation
+# --------------------------------------------------------------------------- #
+
+
+def derive_num_ctx(context_length: int | None) -> int:
+    """Derive the safe ``num_ctx`` from a model's real context window.
+
+    ``min(context_length, configured_ceiling) - headroom``. The ceiling
+    (``PROXY_NUM_CTX_CEILING``) is the VRAM-safe upper bound the tower can carry
+    regardless of how large a model advertises; the headroom
+    (``PROXY_NUM_CTX_HEADROOM``) leaves room for the completion. A ``None``
+    context length (backend unreachable, or a tag present but not reporting one)
+    falls back to the ceiling so a real request never gets a degenerate window.
+    """
+    settings = get_settings()
+    ceiling = settings.num_ctx_ceiling
+    headroom = settings.num_ctx_headroom
+    base = ceiling if context_length is None else min(context_length, ceiling)
+    return max(base - headroom, 1)
+
+
+# --------------------------------------------------------------------------- #
+# Backend chain (tag-independent)
+# --------------------------------------------------------------------------- #
+
+
+def _backend_specs() -> list[dict[str, Any]]:
+    """The ordered backend targets, without a tag (the tag comes per-request).
+
+    Defaults to the single tower ollama backend, whose base URL resolves from
+    env/SSM at boot. A deploy supplies a fallback chain (siblings / CPU / an
+    OpenAI-dialect target) via ``PROXY_BACKENDS_JSON`` / ``PROXY_BACKENDS_FILE``.
+    """
+    override = get_settings().backend_overrides()
+    if override:
+        return override
     tower = get_settings().resolved_tower_base_url()
-
-    def tower_backend(tag: str) -> Backend:
-        return Backend(name="tower-3026", url=tower, ollama_tag=tag)
-
-    def llama_backend(tag: str) -> Backend:
-        parts = urlsplit(tower)
-        llama_url = urlunsplit((parts.scheme, f"{parts.hostname}:8080", "", "", ""))
-        return Backend(
-            name="tower-llama-8080",
-            url=llama_url,
-            ollama_tag=tag,
-            dialect="openai",
-            chat_path="/v1/chat/completions",
-            health_path="/health",
-            injects_num_ctx=False,
-        )
-
-    # Tags chosen to exist on the tower today; a deploy override can repoint them.
-    return {
-        "fast-think": LogicalModel(
-            "fast-think", FAST_THINK_NUM_CTX, [tower_backend("qwen3:30b-a3b")]
-        ),
-        "fast": LogicalModel("fast", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3-coder:30b")]),
-        "ctx-think": LogicalModel("ctx-think", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3:32b")]),
-        "ctx": LogicalModel("ctx", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3-coder:30b")]),
-        "tune": LogicalModel("tune", CONSERVATIVE_NUM_CTX, [tower_backend("qwen3:30b-a3b")]),
-        "gpt-oss-120b": LogicalModel(
-            "gpt-oss-120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]
-        ),
-        "gpt-oss:120b": LogicalModel(
-            "gpt-oss:120b", CONSERVATIVE_NUM_CTX, [llama_backend("gpt-oss:120b")]
-        ),
-    }
+    return [{"name": "tower-3026", "url": tower, "dialect": "ollama"}]
 
 
-def _apply_overrides(
-    base: dict[str, LogicalModel], overrides: dict[str, Any]
-) -> dict[str, LogicalModel]:
-    """Merge a deploy-supplied override dict over the built-in table.
+def _primary_base_url() -> str:
+    """Base URL of the primary backend - the one whose ``/api/tags`` is the
+    catalog source of truth for listing and context lengths."""
+    return _backend_specs()[0]["url"].rstrip("/")
 
-    Shape: ``{name: {"num_ctx": int, "backends": [{"name","url","ollama_tag","timeout"?}, ...]}}``.
-    A name present only in the override is added; a name in both is replaced.
-    """
-    merged = dict(base)
-    for name, spec in overrides.items():
-        num_ctx = int(spec.get("num_ctx", CONSERVATIVE_NUM_CTX))
-        backends_spec = spec.get("backends") or []
-        backends = [
+
+def _backends_for_tag(tag: str) -> list[Backend]:
+    """Build the fallback chain for ``tag`` by stamping it onto every spec."""
+    out: list[Backend] = []
+    for spec in _backend_specs():
+        out.append(
             Backend(
-                name=b["name"],
-                url=b["url"].rstrip("/"),
-                ollama_tag=b["ollama_tag"],
-                dialect=b.get("dialect", "ollama"),
-                chat_path=b.get("chat_path"),
-                health_path=b.get("health_path"),
-                injects_num_ctx=b.get("injects_num_ctx", True),
-                timeout=b.get("timeout"),
+                name=spec["name"],
+                url=spec["url"].rstrip("/"),
+                ollama_tag=spec.get("ollama_tag", tag),
+                dialect=spec.get("dialect", "ollama"),
+                chat_path=spec.get("chat_path"),
+                health_path=spec.get("health_path"),
+                injects_num_ctx=spec.get("injects_num_ctx", True),
+                timeout=spec.get("timeout"),
             )
-            for b in backends_spec
-        ]
-        if not backends and name in base:
-            # Override num_ctx only, keep the existing chain.
-            backends = base[name].backends
-        merged[name] = LogicalModel(name=name, num_ctx=num_ctx, backends=backends)
-    return merged
+        )
+    return out
 
 
-class Registry:
-    """Holds the logical-model table and resolves names to models."""
-
-    def __init__(self, models: dict[str, LogicalModel]):
-        self._models = models
-
-    def get(self, name: str) -> LogicalModel | None:
-        return self._models.get(name)
-
-    def names(self) -> list[str]:
-        return list(self._models.keys())
-
-    def all(self) -> list[LogicalModel]:
-        return list(self._models.values())
-
-    def all_backends(self) -> list[Backend]:
-        seen: dict[str, Backend] = {}
-        for m in self._models.values():
-            for b in m.backends:
-                seen.setdefault(b.name, b)
-        return list(seen.values())
-
-
-_registry: Registry | None = None
-
-
-def get_registry() -> Registry:
-    """Process-wide registry singleton, built from defaults + optional override."""
-    global _registry
-    if _registry is None:
-        table = _default_registry()
-        overrides = get_settings().model_overrides()
-        if overrides:
-            table = _apply_overrides(table, overrides)
-        _registry = Registry(table)
-    return _registry
-
-
-def reset_registry() -> None:
-    """Test hook: force a rebuild on next access."""
-    global _registry
-    _registry = None
-
-
-# --- Flat-dict view (leg 04 step 2 acceptance API) --------------------------
+# --------------------------------------------------------------------------- #
+# Catalog (/api/tags) cache
+# --------------------------------------------------------------------------- #
 #
-# A logical name resolves to a plain ``{"backend_url", "ollama_tag", "num_ctx"}``
-# dict - the primary backend of the registry entry, flattened. This is the small
-# stable surface the rest of the proxy and its tests read; the ``Registry`` above
-# carries the full fallback chain and dialect detail behind it.
+# ``/api/tags`` on the primary backend is the single source of truth for which
+# tags exist and each tag's real ``context_length``. It is read once per base URL
+# and cached; a value of ``None`` means "present but not reporting a context
+# length" so :func:`derive_num_ctx` falls back to the ceiling. The second return
+# element records whether the fetch succeeded, so an unreachable backend fails
+# *open* (a real request is served with a conservative window) rather than
+# turning every tag into a 404. Only *successful* reads are cached - a failed
+# fetch is retried on the next request, so a tower that comes up after the proxy
+# started is still discovered.
+
+_catalog_cache: dict[str, dict[str, int | None]] = {}
 
 
-def _flat_view(model: LogicalModel) -> dict[str, Any]:
-    """Flatten a :class:`LogicalModel` to its primary-backend dict."""
-    primary = model.primary
-    return {
-        "backend_url": primary.url,
-        "ollama_tag": primary.ollama_tag,
-        "num_ctx": model.num_ctx,
-    }
+async def _catalog(base_url: str) -> tuple[dict[str, int | None], bool]:
+    """Return ``(tag -> context_length, fetch_ok)`` for ``base_url``, caching
+    only successful reads."""
+    cached = _catalog_cache.get(base_url)
+    if cached is not None:
+        return cached, True
+
+    tags: dict[str, int | None] = {}
+    try:
+        # Lazy import breaks the models <-> upstream import cycle and reuses the
+        # shared, OTel-instrumented httpx client.
+        from . import upstream
+
+        resp = await upstream.get_client().get(f"{base_url}/api/tags", timeout=10.0)
+        resp.raise_for_status()
+        data = resp.json()
+        for entry in data.get("models", []) or []:
+            name = entry.get("name") or entry.get("model")
+            if not name:
+                continue
+            details = entry.get("details") or {}
+            ctx = details.get("context_length")
+            tags[name] = ctx if isinstance(ctx, int) and ctx > 0 else None
+    except Exception:
+        return {}, False
+
+    _catalog_cache[base_url] = tags
+    return tags, True
 
 
-def get_model(name: str) -> dict[str, Any] | None:
-    """Return the flat ``{backend_url, ollama_tag, num_ctx}`` dict for ``name``.
+def reset_catalog() -> None:
+    """Test hook / operational reset: force the next access to re-fetch."""
+    _catalog_cache.clear()
 
-    Returns ``None`` for an unknown logical name (callers that want a hard error
-    can index the result or use :meth:`Registry.get`).
+
+# --------------------------------------------------------------------------- #
+# Resolution surface
+# --------------------------------------------------------------------------- #
+
+
+async def resolve(tag: str) -> LogicalModel | None:
+    """Resolve a real ollama ``tag`` to a :class:`LogicalModel`, or ``None``.
+
+    Reads the primary backend's ``/api/tags`` (cached) to derive the tag's safe
+    ``num_ctx`` and confirm it exists. Returns ``None`` only for a *genuinely
+    unknown* tag - one absent from a catalog we successfully read - which the
+    routes turn into a 404. If the catalog could not be read (backend down), the
+    tag is served fail-open with a conservative window so a transient outage is
+    surfaced as a 502 by the dispatch layer, not misreported as "unknown model".
     """
-    model = get_registry().get(name)
-    if model is None:
+    if not tag:
         return None
-    return _flat_view(model)
+    tags, ok = await _catalog(_primary_base_url())
+    if ok and tag not in tags:
+        return None
+    num_ctx = derive_num_ctx(tags.get(tag))
+    return LogicalModel(name=tag, num_ctx=num_ctx, backends=_backends_for_tag(tag))
 
 
-def list_models() -> list[str]:
-    """The logical names the registry currently serves."""
-    return get_registry().names()
-
-
-class _LogicalModelsView(dict):
-    """Live mapping of logical name -> flat dict, resolved from the registry.
-
-    Kept as a dict subclass so ``LOGICAL_MODELS[name]`` and iteration read as a
-    plain table while still reflecting any deploy override applied at boot.
-    """
-
-    def __init__(self) -> None:
-        super().__init__({m.name: _flat_view(m) for m in get_registry().all()})
-
-
-LOGICAL_MODELS: dict[str, dict[str, Any]] = _LogicalModelsView()
+async def list_tags() -> list[str]:
+    """The tags actually present on the primary backend (from ``/api/tags``)."""
+    tags, _ok = await _catalog(_primary_base_url())
+    return sorted(tags.keys())

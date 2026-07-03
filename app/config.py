@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # Context-budget headroom reserved for the completion (leg 04 step 5).
     num_ctx_headroom: int = Field(default=1024)
 
+    # VRAM-safe upper bound on the injected num_ctx (issue #32). The proxy reads
+    # a model's real context_length from /api/tags and injects
+    # min(context_length, num_ctx_ceiling) - num_ctx_headroom, so a model that
+    # advertises a huge window (qwen3:4b = 262144) never allocates more KV cache
+    # than the tower can carry. Default is the leg-01 proven-safe ceiling.
+    num_ctx_ceiling: int = Field(default=49152)
+
     # Observability wiring (leg 04 step 1).
     sentry_dsn: str = Field(default="")
     otel_exporter_otlp_endpoint: str = Field(default="")
@@ -83,10 +90,12 @@ class Settings(BaseSettings):
     tower_base_url: str = Field(default="")
     tower_port: int = Field(default=11434)
 
-    # Logical-model registry override. A JSON string or a path to a JSON file
-    # lets a deploy (a ConfigMap later) override the built-in table.
-    models_json: str = Field(default="")
-    models_file: str = Field(default="")
+    # Backend chain override (issue #32). A JSON array of backend specs
+    # (``{"name","url","dialect"?,"chat_path"?,...}``, no tag - the tag comes
+    # from the request) lets a deploy (a ConfigMap later) supply siblings / CPU /
+    # an OpenAI-dialect fallback beyond the single built-in tower backend.
+    backends_json: str = Field(default="")
+    backends_file: str = Field(default="")
 
     def resolved_tower_base_url(self) -> str:
         """The primary ollama base URL, from env, SSM, or a safe local default."""
@@ -104,21 +113,22 @@ class Settings(BaseSettings):
     def resolved_api_fallback_key(self) -> str:
         return _ssm_get(SSM_API_FALLBACK_KEY) or os.environ.get("PROXY_API_FALLBACK_KEY", "")
 
-    def model_overrides(self) -> dict[str, Any] | None:
-        """Parsed model-registry override, or None to use the built-in table."""
-        raw = self.models_json
-        if not raw and self.models_file:
+    def backend_overrides(self) -> list[dict[str, Any]] | None:
+        """Parsed backend-chain override, or None to use the built-in tower."""
+        raw = self.backends_json
+        if not raw and self.backends_file:
             try:
-                with open(self.models_file, "r", encoding="utf-8") as fh:
+                with open(self.backends_file, "r", encoding="utf-8") as fh:
                     raw = fh.read()
             except OSError:
                 return None
         if not raw:
             return None
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
             return None
+        return parsed if isinstance(parsed, list) and parsed else None
 
 
 @lru_cache(maxsize=1)

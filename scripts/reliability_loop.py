@@ -7,20 +7,21 @@ each response *usable* vs *failed* using the proxy's own
 ``resilience.validate_response`` (imported, not reimplemented). Emits a
 reliability percentage and a failure-reason histogram.
 
-Targets:
+Targets (both pass the same real ollama tag - issue #32, no logical alias):
 * ``direct`` - the tower's ``/v1`` with no ``num_ctx`` (the opencode/crush shape).
-* ``proxy``  - the local proxy's logical ``fast-think`` (num_ctx injected).
+* ``proxy``  - the local proxy, which derives and injects a safe ``num_ctx``.
 
 Usage::
 
-    TOWER=<host> uv run python scripts/reliability_loop.py --target proxy --turns 6
-    TOWER=<host> uv run python scripts/reliability_loop.py --target direct --turns 6
+    TOWER=<host> MODEL=qwen3-coder:30b uv run python scripts/reliability_loop.py --target proxy --turns 6
+    TOWER=<host> MODEL=qwen3-coder:30b uv run python scripts/reliability_loop.py --target direct --turns 6
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -57,10 +58,14 @@ _SYSTEM = (
 )
 
 
+# The real ollama tag both targets run against (issue #32: pass-through, no alias).
+_MODEL = os.environ.get("MODEL", "qwen3-coder:30b")
+
+
 def _endpoint_and_model(target: str) -> tuple[str, str]:
     if target == "proxy":
-        return f"{proxy_base_url()}/v1/chat/completions", "fast-think"
-    return f"{tower_base_url()}/v1/chat/completions", "qwen3-coder:30b"
+        return f"{proxy_base_url()}/v1/chat/completions", _MODEL
+    return f"{tower_base_url()}/v1/chat/completions", _MODEL
 
 
 def _to_result(openai_resp: dict) -> UpstreamResult:

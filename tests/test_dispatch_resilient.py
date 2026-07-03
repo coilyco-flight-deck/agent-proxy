@@ -9,15 +9,15 @@ Covers the issue's stated acceptance:
   ``llm_fallbacks_total`` incremented.
 
 The engine (``dispatch``) is exercised through ``dispatch_resilient`` so the
-name -> registry -> chain resolution is proven end to end, not just the engine.
+tag -> catalog resolution -> chain path is proven end to end, not just the engine.
 """
 
 import pytest
 
 from app import resilience, upstream
-from app.models import Backend, LogicalModel, Registry
+from app.models import Backend, LogicalModel
 from app.obs import llm_fallbacks_total, llm_retries_total
-from app.resilience import AllBackendsFailed, UnknownLogicalModel
+from app.resilience import AllBackendsFailed, UnknownModel
 from app.upstream import UpstreamError, UpstreamResult
 
 
@@ -25,10 +25,14 @@ def _good(content: str = "ok") -> UpstreamResult:
     return UpstreamResult(model="m", content=content, prompt_eval_count=1, eval_count=1)
 
 
-def _install_registry(monkeypatch, model: LogicalModel) -> None:
-    """Point ``dispatch_resilient``'s name lookup at a controlled one-model table."""
-    reg = Registry({model.name: model})
-    monkeypatch.setattr(resilience, "get_registry", lambda: reg)
+def _install_resolve(monkeypatch, model: LogicalModel) -> None:
+    """Point ``dispatch_resilient``'s tag resolution at a controlled one-model
+    catalog: the seeded tag resolves, everything else is unknown."""
+
+    async def fake_resolve(name):
+        return model if name == model.name else None
+
+    monkeypatch.setattr(resilience, "resolve", fake_resolve)
 
 
 def _retries(model: str, backend: str) -> float:
@@ -52,8 +56,8 @@ def _fast_and_isolated(monkeypatch):
 
 async def test_fails_twice_then_succeeds_counts_retries(monkeypatch):
     backend = Backend(name="b-retry", url="http://x", ollama_tag="t")
-    model = LogicalModel("fast-think", 4096, [backend])
-    _install_registry(monkeypatch, model)
+    model = LogicalModel("qwen3:4b", 4096, [backend])
+    _install_resolve(monkeypatch, model)
 
     calls = {"n": 0}
 
@@ -75,8 +79,8 @@ async def test_fails_twice_then_succeeds_counts_retries(monkeypatch):
 
 async def test_always_fails_surfaces_clean_error(monkeypatch):
     backend = Backend(name="b-dead", url="http://x", ollama_tag="t")
-    model = LogicalModel("fast", 4096, [backend])
-    _install_registry(monkeypatch, model)
+    model = LogicalModel("qwen3:8b", 4096, [backend])
+    _install_resolve(monkeypatch, model)
 
     async def dead(*args, **kwargs):
         raise UpstreamError("backend down")
@@ -90,8 +94,8 @@ async def test_always_fails_surfaces_clean_error(monkeypatch):
 async def test_falls_back_to_next_backend(monkeypatch):
     primary = Backend(name="b-primary", url="http://x", ollama_tag="t")
     secondary = Backend(name="b-secondary", url="http://y", ollama_tag="t")
-    model = LogicalModel("ctx", 4096, [primary, secondary])
-    _install_registry(monkeypatch, model)
+    model = LogicalModel("qwen3:32b", 4096, [primary, secondary])
+    _install_resolve(monkeypatch, model)
 
     async def chat(be, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
         if be.name == primary.name:
@@ -107,9 +111,9 @@ async def test_falls_back_to_next_backend(monkeypatch):
     assert _fallbacks(model.name, primary.name) - before == 1
 
 
-async def test_unknown_logical_name_raises(monkeypatch):
+async def test_unknown_tag_raises(monkeypatch):
     model = LogicalModel("known", 4096, [Backend(name="b", url="http://x", ollama_tag="t")])
-    _install_registry(monkeypatch, model)
+    _install_resolve(monkeypatch, model)
 
-    with pytest.raises(UnknownLogicalModel):
+    with pytest.raises(UnknownModel):
         await resilience.dispatch_resilient("does-not-exist", [])

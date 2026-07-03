@@ -6,20 +6,25 @@ Sends a ~55k-token prompt two ways and compares ``prompt_eval_count``:
 
 * direct to the tower's ``/v1`` with no ``num_ctx`` (what opencode/crush do) -
   expected to cap at 32767, the silent left-truncation.
-* through the proxy's logical ``fast-think`` (``num_ctx=49152`` injected) -
-  expected to keep ~49151.
+* through the proxy, passing the **same real ollama tag** (issue #32: no logical
+  alias) - the proxy derives a safe ``num_ctx`` from the model's real
+  ``context_length`` and injects it, so the prompt is kept (~48k+).
 
-Usage: ``TOWER=<host> uv run python scripts/truncation_proof.py`` with the proxy
-already running locally.
+Usage: ``TOWER=<host> MODEL=qwen3-coder:30b uv run python
+scripts/truncation_proof.py`` with the proxy already running locally.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.request
 
 from _endpoints import proxy_base_url, tower_base_url
+
+# The real ollama tag to prove against, passed straight through the proxy.
+MODEL = os.environ.get("MODEL", "qwen3-coder:30b")
 
 
 def _big_prompt(nlines: int = 6000) -> str:
@@ -46,7 +51,7 @@ def main() -> int:
     direct = _post(
         f"{tower}/v1/chat/completions",
         {
-            "model": "qwen3-coder:30b",
+            "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 16,
         },
@@ -56,7 +61,7 @@ def main() -> int:
     through = _post(
         f"{proxy}/v1/chat/completions",
         {
-            "model": "fast-think",
+            "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 1024,
         },
@@ -64,7 +69,7 @@ def main() -> int:
     proxy_kept = through["usage"]["prompt_tokens"]
 
     print(f"direct tower /v1 (no num_ctx): prompt_eval_count = {direct_kept}  <- the 32k cliff")
-    print(f"through proxy fast-think:      prompt_eval_count = {proxy_kept}  <- num_ctx injected")
+    print(f"through proxy {MODEL}: prompt_eval_count = {proxy_kept}  <- num_ctx injected")
 
     ok = direct_kept <= 32768 and proxy_kept > 32768
     print("PASS - truncation removed" if ok else "FAIL - unexpected counts")

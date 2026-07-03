@@ -2,11 +2,12 @@
 FastAPI entrypoint: the OpenAI-compatible surface plus health and metrics
 (leg 02 "web server", leg 04 steps 1 and 6).
 
-Every harness points here unchanged. Requests carry a *logical* model name
-(``fast-think`` etc.); the proxy resolves it to a backend and the model's safe
-``num_ctx``, guards the context budget, and dispatches through the queue and the
-resilience policies. Responses are shaped to the OpenAI schema so no harness
-needs special handling.
+Every harness points here unchanged. Requests carry the **real ollama tag**
+(``qwen3:4b`` etc.) as ``model``; the proxy resolves it against the backend
+catalog, derives that model's safe ``num_ctx`` from its real ``context_length``,
+guards the context budget, and dispatches through the queue and the resilience
+policies. Responses are shaped to the OpenAI schema so no harness needs special
+handling.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from prometheus_client import CONTENT_TYPE_LATEST
 from . import resilience, upstream
 from .analysis import apply_context_budget
 from .config import get_settings
-from .models import get_registry
+from .models import list_tags, resolve
 from .obs import (
     RequestTraceContext,
     get_tracer,
@@ -57,7 +58,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pass
 
     await get_queue().start()
-    log.info("startup.complete", models=get_registry().names())
+    # Tags are read live from the backend's /api/tags on first request, not at
+    # boot - the tower need not be reachable for the proxy to start.
+    log.info("startup.complete")
     try:
         yield
     finally:
@@ -183,11 +186,12 @@ def _trace_context(
 @app.get("/v1/models")
 async def list_models() -> dict[str, Any]:
     created = int(time.time())
+    tags = await list_tags()
     return {
         "object": "list",
         "data": [
-            {"id": name, "object": "model", "created": created, "owned_by": "agent-proxy"}
-            for name in get_registry().names()
+            {"id": tag, "object": "model", "created": created, "owned_by": "agent-proxy"}
+            for tag in tags
         ],
     }
 
@@ -280,7 +284,7 @@ async def chat_completions(request: Request) -> Response:
         return _error(400, "invalid JSON body", "invalid_request_error")
 
     model_name = body.get("model")
-    model = get_registry().get(model_name) if model_name else None
+    model = await resolve(model_name) if model_name else None
     if model is None:
         return _error(404, f"unknown model '{model_name}'", "model_not_found")
 
@@ -354,7 +358,7 @@ async def completions(request: Request) -> Response:
         return _error(400, "invalid JSON body", "invalid_request_error")
 
     model_name = body.get("model")
-    model = get_registry().get(model_name) if model_name else None
+    model = await resolve(model_name) if model_name else None
     if model is None:
         return _error(404, f"unknown model '{model_name}'", "model_not_found")
 

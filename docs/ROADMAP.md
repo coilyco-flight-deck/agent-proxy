@@ -10,7 +10,7 @@ Drag every harness up to goose-level reliability by killing silent context trunc
 
 Phase 1 maps to the aosh mission milestones M1 through M8 (`docs/plan/90-sequencing-and-milestones.md`). M0 (plan committed) is done in aosh.
 
-* **M1 - truncation killed** - benchmark the tower, build the proxy core, inject per-model `num_ctx`, prove the 32k cliff is gone, and repoint one local opencode. The fastest, model-independent reliability win. (aosh headless legs 03, 04)
+* **M1 - truncation killed** - benchmark the tower, build the proxy core, derive and inject each model's `num_ctx` from its real `context_length` (harnesses pass the real ollama tag; the logical-alias table was retired in issue #32), prove the 32k cliff is gone, and repoint one local opencode. The fastest, model-independent reliability win. (aosh headless legs 03, 04)
 * **M2 - resilience core measured** - queue, validation, retry, fallback, and breaker, all instrumented, with the reliability harness giving the baseline-to-after number. Kai sets the SLO target at the consult checkpoint. (aosh headless legs 04, 05)
 * **M3 - on kai-server** - the 2-pod decision, authorization, and the 2-replica proxy plus Caddy deployed with secrets from SSM and the tower hardened. (aosh consult leg 09)
 * **M4 - harnesses repointed** - opencode, crush, openclaw, and openwebui moved onto the gateway with one native goose kept as control, each passing the reliability harness. (aosh consult leg 10)
@@ -55,4 +55,4 @@ Validate and shape request and response i/o. This overlaps the phase-1 resilienc
 
 ## Source of truth
 
-The design is locked in aosh and is not duplicated here. See `docs/plan/02-reference-architecture.md`, `docs/plan/04-headless-proxy-build.md`, and `docs/plan/90-sequencing-and-milestones.md` in `coilyco-bridge/agentic-os-hardware`, and the tracking issue `coilysiren/inbox#118` whose two locked-design comments supersede parts of the original brief.
+The design is locked in aosh and is not duplicated here. See `docs/plan/02-reference-architecture.md`, `docs/plan/04-headless-proxy-build.md`, and `docs/plan/90-sequencing-and-milestones.md` in `coilyco-bridge/agentic-os-hardware`, and the tracking issue `coilysiren/inbox#118` whose two locked-design comments supersede parts of the original brief. The litellm-as-core re-core that supersedes the routing layer entirely is tracked in `coilyco-bridge/agentic-os-hardware#25`; issue #32 (pass-through tags + auto num_ctx) is the compatible phase-1 step toward it.
