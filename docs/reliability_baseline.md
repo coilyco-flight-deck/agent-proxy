@@ -1,64 +1,109 @@
-# Reliability Test Results - M2 Baseline
+# Reliability measurement - M2 baseline-to-after
 
-## Overview
+The durable record for the M2 milestone number: the reliability harness
+(`scripts/reliability_loop.py`, leg 05) run against both targets, scored by the
+proxy's own `validate_response`, producing a reliability percentage and a
+failure histogram for each. This file is the human record; the harness's
+`--json` artifact is the machine-readable companion.
 
-This document records the baseline reliability measurements taken during the M2 phase of the agent-proxy project. The tests were run using `scripts/reliability_loop.py` against both targets to compare performance.
+## Measurement status
 
-## Test Setup
+**PENDING - not yet measured against the tower.** The harness, its durable JSON
+artifact, and the offline scoring tests all landed under agent-proxy#19, but the
+engineer container that did that work had **no tailnet reachability to the
+tower** (no `tailscaled`, no `WARD_TOWER_OLLAMA` bridge, no SSM credentials), and
+both targets require a live tower LLM. So the numbers below are deliberately left
+unfilled rather than fabricated - recording an invented percentage is exactly the
+failure this milestone exists to fix. Taking the measurement is a single
+reproducible command (below) from any tower-reachable host.
 
-- **Target 1**: `direct` - tower's `/v1` with no `num_ctx` (the opencode/crush shape)
-- **Target 2**: `proxy` - local proxy's logical `fast-think` (num_ctx injected)
-- **Turns**: 6 
-- **Test Type**: Context-growing, tool-using loop
-- **Validation**: Using proxy's own `validate_response` function
+Do **not** copy a number into the results table from anywhere but a real harness
+run's output or its `--json` artifact.
 
-## Results Summary
+## How to take the measurement
 
-| Target | Model | Turns | Reliability | Notes |
-|--------|-------|-------|-------------|-------|
-| direct | qwen3-coder:30b | 6 | ~75% | Baseline performance |
-| proxy | fast-think | 6 | ~90% | Improved with num_ctx injection |
+From a host with the tower reachable, with the proxy running for the `proxy`
+target:
 
-## Detailed Findings
+```bash
+# 1. start the proxy (a second shell); resolves the tower FQDN from SSM if unset
+PROXY_TOWER_BASE_URL=http://<tower>:11434 ward exec serve
 
-### Direct Target (baseline)
-- Context management: Without `num_ctx` injection, context growth causes truncation issues
-- Tool usage: Some failures due to missed tool calls and validation errors
-- Overall performance: ~75% reliability
+# 2. run both targets in one pass and write the durable artifact
+TOWER=<tower> ward exec reliability -- --target both --turns 6 --json docs/reliability_m2.json
+```
 
-### Proxy Target (improved) 
-- Context management: With `num_ctx` injection (49152), better handling of long contexts
-- Tool usage: More consistent tool call execution
-- Overall performance: ~90% reliability (improvement over direct)
+`ward exec reliability` runs `scripts/reliability_loop.py`; bare
+`ward reliability` also works via ward's unknown-verb fallback. Args ride after
+`--`. The tower FQDN is resolved at runtime and never written into the artifact
+or this file.
 
-## Failure Reason Histograms
+## Run shape
 
-### Direct Target
-- `ok`: [count]
-- `timeout`: [count] 
-- `upstream_5xx`: [count]
-- `missed_toolcall`: [count]
+- **Turns**: 6 (default; `--turns N` to change). Odd turns must call the
+  `get_line_count` tool; even turns ask for a one-line summary.
+- **Context growth**: each turn appends a ~1200-line file-shaped blob (~8k
+  tokens), so the accumulated prompt crosses the 32k default `num_ctx` cliff
+  within a couple of turns - the condition that produces silent truncation on
+  the direct target.
+- **Scoring**: `app.resilience.validate_response` decides usable vs garbage
+  (empty, malformed tool call, hallucinated action claim, truncation garbage,
+  degenerate repetition), plus a harness-only `missed_toolcall` rule for a turn
+  that ignored the tool contract.
+- **Targets**:
+  - `direct` - tower `/v1` (`qwen3-coder:30b`), no `num_ctx` (the opencode/crush shape).
+  - `proxy` - local proxy logical `fast-think`, `num_ctx=49152` injected.
 
-### Proxy Target
-- `ok`: [count]
-- `timeout`: [count]
-- `upstream_5xx`: [count]
-- `missed_toolcall`: [count]
+## Results
 
-## Analysis
+Fill from the harness output / `--json` artifact of a real run. One row per
+target; the histogram sums to the turn count.
 
-The proxy demonstrates significant improvement in reliability over the direct tower connection. The primary factor is the `num_ctx` injection that prevents context truncation issues while maintaining proper fallback behavior.
+| Target | Model           | Turns | Usable | Reliability | Failure histogram |
+|--------|-----------------|-------|--------|-------------|-------------------|
+| direct | qwen3-coder:30b | _pending_ | _pending_ | _pending_ | _pending_ |
+| proxy  | fast-think      | _pending_ | _pending_ | _pending_ | _pending_ |
 
-This baseline measurement shows:
-1. The core functionality works as designed
-2. The proxy improves reliability by ~15 percentage points 
-3. No regression issues identified in the current implementation
+Baseline-to-after delta (proxy reliability minus direct reliability): _pending_.
 
-## Documentation Updates
+### Failure histogram reasons
 
-This baseline measurement validates that the proxy's `num_ctx` injection mechanism is working properly and provides a benchmark for future improvements.
+The reason labels the histogram can contain, all emitted by the scoring path:
 
-The proxy documentation now correctly reflects:
-- The proxy architecture details
-- How to run tests with both targets 
-- The improvement shown by the reliability measurements
+- `ok` - usable response.
+- `empty` - no content, no tool call, no thinking.
+- `missed_toolcall` - text validated but the required tool call was absent.
+- `malformed_toolcall` - a tool call whose arguments do not parse.
+- `truncation_garbage` - a 1-3 char non-word reply (the leg-01 truncation tell).
+- `repetition` - degenerate decoder loop.
+- `upstream_5xx` / `http_<code>` - backend HTTP error.
+- `timeout` - transport error or timeout reaching the endpoint.
+
+## Artifact schema
+
+`--json PATH` writes:
+
+```json
+{
+  "harness": "reliability_loop",
+  "generated_at": "<iso8601, seconds>",
+  "run_shape": {"turns": 6, "blob_lines": 1200, "tool_rule": "...", "scored_by": "..."},
+  "results": {
+    "direct": {"target": "...", "model": "...", "turns": 6, "usable": N,
+               "reliability_pct": P, "failure_histogram": {...}, "turns_detail": [...]},
+    "proxy":  { ... }
+  }
+}
+```
+
+The schema is stable across runs and the histogram is sorted, so two artifacts
+diff cleanly for a before/after check. Commit the artifact (e.g.
+`docs/reliability_m2.json`) alongside the filled table above when the
+measurement is taken.
+
+## Interpreting it
+
+M2 ("resilience core measured") is complete when this table carries real numbers
+and the delta shows the proxy lifting reliability over the direct baseline. Until
+then M2 is **harness-ready, measurement-pending**: the code, artifact, and tests
+exist and are proven offline, but the milestone number is not yet recorded.
