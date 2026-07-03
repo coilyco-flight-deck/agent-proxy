@@ -115,20 +115,31 @@ phase-1 change.
 ## Running and proving locally
 
 ```
-ward sync                                             # uv sync (installs app + dev)
-PROXY_TOWER_BASE_URL=http://<tower>:11434 ward serve  # proxy on 127.0.0.1:8080
-ward test                                             # offline suite, tower not required
+ward exec sync                                             # uv sync (installs app + dev)
+PROXY_TOWER_BASE_URL=http://<tower>:11434 ward exec serve  # proxy on 127.0.0.1:8080
+ward exec test                                             # offline suite, tower not required
 
-# with the proxy running and a tower reachable (pass a real ollama tag):
-TOWER=<tower> MODEL=qwen3-coder:30b ward proof        # 32767 (direct) vs num_ctx-injected (proxy)
-TOWER=<tower> MODEL=qwen3-coder:30b ward reliability --target proxy --turns 6
+# with the proxy running and a tower reachable (pass a real ollama tag via MODEL):
+TOWER=<tower> MODEL=qwen3-coder:30b ward exec proof        # 32767 (direct) vs num_ctx-injected (proxy)
+TOWER=<tower> MODEL=qwen3-coder:30b ward exec reliability -- --target both --turns 6 --json reliability.json
 ```
 
+The invocation is `ward exec <verb>`, defined in `.ward/ward.yaml`. Bare
+`ward <verb>` also resolves (ward's unknown-verb fallback rewrites it to
+`ward exec <verb>`), but the explicit `exec` form is unambiguous and is what
+these docs use. Script arguments ride after a `--` so ward hands them to the
+verb rather than parsing them itself.
+
 `scripts/truncation_proof.py` reproduces the leg-01 truncation test through the
-proxy. `scripts/reliability_loop.py` is the leg-05 harness scaffold: it scores a
-context-growing, tool-using loop with the proxy's own `validate_response` and
-emits a reliability percentage and failure histogram. Both resolve the tower via
-`TOWER` / `PROXY_TOWER_BASE_URL` / SSM and never write the FQDN into a file.
+proxy. `scripts/reliability_loop.py` is the leg-05 reliability harness: it scores
+a context-growing, tool-using loop with the proxy's own `validate_response` and
+emits a reliability percentage and failure histogram. `--target both` runs the
+`direct` baseline and the `proxy` after in one pass and prints the comparison;
+`--json PATH` writes a durable, machine-readable artifact (stable schema, no FQDN
+inside) so a future before/after check re-runs the same command and diffs the
+JSON. The measured result and its reproduction command live in
+`docs/reliability_baseline.md`. Both scripts resolve the tower via `TOWER` /
+`PROXY_TOWER_BASE_URL` / SSM and never write the FQDN into a file.
 
 ## Metrics
 

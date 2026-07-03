@@ -7,26 +7,39 @@ each response *usable* vs *failed* using the proxy's own
 ``resilience.validate_response`` (imported, not reimplemented). Emits a
 reliability percentage and a failure-reason histogram.
 
-Targets (both pass the same real ollama tag - issue #32, no logical alias):
+Targets (all pass the same real ollama tag - issue #32, no logical alias; set it
+with the ``MODEL`` env var, default ``qwen3-coder:30b``):
 * ``direct`` - the tower's ``/v1`` with no ``num_ctx`` (the opencode/crush shape).
 * ``proxy``  - the local proxy, which derives and injects a safe ``num_ctx``.
+* ``both``   - run ``direct`` then ``proxy`` in one invocation and print the
+  baseline-to-after comparison. This is the M2 measurement shape.
+
+Durability: ``--json PATH`` writes a machine-readable artifact (stable schema:
+run shape, per-target reliability, failure histogram, per-turn detail) so a
+future before/after check re-runs the same command and diffs the JSON instead of
+re-reading a terminal scrollback. The tower FQDN is resolved at runtime and is
+never written into the artifact.
 
 Usage::
 
-    TOWER=<host> MODEL=qwen3-coder:30b uv run python scripts/reliability_loop.py --target proxy --turns 6
-    TOWER=<host> MODEL=qwen3-coder:30b uv run python scripts/reliability_loop.py --target direct --turns 6
+    TOWER=<host> ward exec reliability -- --target both --turns 6 --json out.json
+    TOWER=<host> ward exec reliability -- --target proxy --turns 6
+
+(``ward exec reliability`` and, via the unknown-verb fallback, bare
+``ward reliability`` both resolve to this script; args ride after ``--``.)
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
 from collections import Counter
-import datetime
+from typing import Any
 
 from _endpoints import proxy_base_url, tower_base_url
 
@@ -35,9 +48,10 @@ from app.upstream import UpstreamResult
 
 # A file-shaped blob so each accumulated tool output pushes context upward. About
 # ~8k tokens per blob; a couple of these already overflow the 32k default.
+_BLOB_LINES = 1200
 _BLOB = "\n".join(
     f"    row[{i}] = compute(payload[{i}], config['key_{i}'], flags={i % 7})  # noqa"
-    for i in range(1200)
+    for i in range(_BLOB_LINES)
 )
 
 _TOOLS = [
@@ -77,35 +91,62 @@ def _to_result(openai_resp: dict) -> UpstreamResult:
     )
 
 
-def _score_turn(url: str, model: str, messages: list, expect_tool: bool) -> tuple[bool, str]:
-    body = {"model": model, "messages": messages, "max_tokens": 512, "stream": False}
-    if expect_tool:
-        body["tools"] = _TOOLS
-    data = json.dumps(body).encode()
-    req = urllib.request.Request(url, data, {"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=600) as resp:
-            payload = json.load(resp)
-    except urllib.error.HTTPError as exc:
-        return False, "upstream_5xx" if exc.code >= 500 else f"http_{exc.code}"
-    except (urllib.error.URLError, TimeoutError):
-        return False, "timeout"
+def score_payload(payload: dict, expect_tool: bool) -> tuple[bool, str]:
+    """Score one already-fetched OpenAI response ``(ok, reason)``.
 
+    Pure and network-free so the offline test suite can exercise every scoring
+    branch. Reuses the proxy's own ``validate_response`` for the usable/garbage
+    decision, then layers the harness-only ``missed_toolcall`` rule on top: a
+    response that validates as text but ignores the tool contract is the leg-01
+    "weak context management" failure mode and counts as a miss.
+    """
     result = _to_result(payload)
     ok, reason = validate_response(result)
     if not ok:
         return False, reason
     if expect_tool and not result.tool_calls:
-        # The model ignored the tool rule - the leg-01 "weak context management"
-        # failure mode. Count it as a miss even though the text validates.
         return False, "missed_toolcall"
     return True, "ok"
 
 
-def run(target: str, turns: int) -> tuple[int, Counter[str], dict]:
+def _fetch(url: str, body: dict) -> dict:
+    """POST ``body`` to ``url`` and return the decoded JSON. Raises on transport
+    or HTTP error - the caller maps those to failure reasons."""
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(url, data, {"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as resp:
+        return json.load(resp)
+
+
+def _score_turn(url: str, model: str, messages: list, expect_tool: bool) -> tuple[bool, str]:
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": 512,
+        "stream": False,
+    }
+    if expect_tool:
+        body["tools"] = _TOOLS
+    try:
+        payload = _fetch(url, body)
+    except urllib.error.HTTPError as exc:
+        return False, "upstream_5xx" if exc.code >= 500 else f"http_{exc.code}"
+    except (urllib.error.URLError, TimeoutError):
+        return False, "timeout"
+    return score_payload(payload, expect_tool)
+
+
+def run(target: str, turns: int) -> dict:
+    """Run the loop against one target and return a structured result.
+
+    The returned dict is the per-target artifact shape: ``reliability_pct`` and a
+    sorted ``failure_histogram`` are the durable numbers; ``turns_detail`` keeps
+    the per-turn record so a regression can be traced to the turn that flipped.
+    """
     url, model = _endpoint_and_model(target)
-    messages = [{"role": "system", "content": _SYSTEM}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": _SYSTEM}]
     reasons: Counter[str] = Counter()
+    detail: list[dict[str, Any]] = []
     usable = 0
 
     for turn in range(turns):
@@ -126,6 +167,7 @@ def run(target: str, turns: int) -> tuple[int, Counter[str], dict]:
         ok, reason = _score_turn(url, model, messages, expect_tool)
         reasons[reason] += 1
         usable += int(ok)
+        detail.append({"turn": turn, "expect_tool": expect_tool, "ok": ok, "reason": reason})
         # Feed a plausible assistant turn back so the conversation keeps growing.
         messages.append({"role": "assistant", "content": "acknowledged."})
         print(
@@ -133,43 +175,75 @@ def run(target: str, turns: int) -> tuple[int, Counter[str], dict]:
         )
 
     pct = 100.0 * usable / turns if turns else 0.0
+    # Sort the histogram so a committed artifact diffs cleanly across runs.
+    histogram = dict(sorted(reasons.items()))
     print(f"\ntarget={target} model={model} runs={turns} reliability={pct:.0f}%")
-    print("failure reasons:", dict(reasons))
+    print("failure reasons:", histogram)
+    return {
+        "target": target,
+        "model": model,
+        "turns": turns,
+        "usable": usable,
+        "reliability_pct": round(pct, 1),
+        "failure_histogram": histogram,
+        "turns_detail": detail,
+    }
 
-    # Return results for reporting
-    return usable, reasons, {"target": target, "model": model, "runs": turns, "reliability": pct}
+
+def build_artifact(results: list[dict], turns: int) -> dict:
+    """Assemble the durable, machine-readable report from one or more per-target
+    runs. Deterministic apart from ``generated_at``; no endpoint FQDN inside."""
+    return {
+        "harness": "reliability_loop",
+        "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "run_shape": {
+            "turns": turns,
+            "blob_lines": _BLOB_LINES,
+            "tool_rule": "odd turns must call get_line_count; even turns are a one-line summary",
+            "scored_by": "app.resilience.validate_response + harness missed_toolcall rule",
+        },
+        "results": {r["target"]: r for r in results},
+    }
+
+
+def _print_comparison(results: list[dict]) -> None:
+    """Print the baseline-to-after table for a multi-target run."""
+    print("\n=== reliability comparison ===")
+    print(f"{'target':8} {'model':16} {'turns':>5} {'reliability':>11}  histogram")
+    for r in results:
+        print(
+            f"{r['target']:8} {r['model']:16} {r['turns']:>5} "
+            f"{r['reliability_pct']:>10.1f}%  {r['failure_histogram']}"
+        )
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--target", choices=["direct", "proxy"], default="proxy")
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--target", choices=["direct", "proxy", "both"], default="proxy")
     ap.add_argument("--turns", type=int, default=6)
+    ap.add_argument(
+        "--json",
+        dest="json_path",
+        metavar="PATH",
+        help="write the durable machine-readable artifact to PATH (schema is stable across runs)",
+    )
     args = ap.parse_args()
 
-    # Run the reliability test and get results
-    usable, reasons, result_info = run(args.target, args.turns)
+    targets = ["direct", "proxy"] if args.target == "both" else [args.target]
+    results = []
+    for target in targets:
+        print(f"\n--- target: {target} ---")
+        results.append(run(target, args.turns))
 
-    # Create a durable report
-    timestamp = datetime.datetime.now().isoformat()
-    report_content = f"""Reliability Test Report
-========================
+    if len(results) > 1:
+        _print_comparison(results)
 
-Run timestamp: {timestamp}
-Target: {result_info['target']}
-Model: {result_info['model']}
-Turns: {result_info['runs']}
-Reliability: {result_info['reliability']:.0f}%
-
-Failure reasons:
-"""
-    for reason, count in reasons.items():
-        report_content += f"  {reason}: {count}\n"
-
-    report_path = f"reliability_report_{result_info['target']}_{timestamp.replace(':', '-')}.txt"
-    with open(report_path, "w") as f:
-        f.write(report_content)
-
-    print(f"\nReport saved to: {report_path}")
+    if args.json_path:
+        artifact = build_artifact(results, args.turns)
+        with open(args.json_path, "w") as fh:
+            json.dump(artifact, fh, indent=2, sort_keys=False)
+            fh.write("\n")
+        print(f"\nArtifact written to: {args.json_path}")
 
     return 0
 
