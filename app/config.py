@@ -79,6 +79,29 @@ class Settings(BaseSettings):
     # than the tower can carry. Default is the leg-01 proven-safe ceiling.
     num_ctx_ceiling: int = Field(default=49152)
 
+    # OLLAMA_NUM_PARALLEL coupling (issue #33). ollama loads num_ctx as the model's
+    # *total* context and divides it across OLLAMA_NUM_PARALLEL slots, so the usable
+    # per-request window is num_ctx / NUM_PARALLEL. A backend serving >1 slot would
+    # silently halve (or worse) the window the proxy asked for. The proxy
+    # compensates by injecting `derived_num_ctx * ollama_num_parallel` so each slot
+    # still delivers the intended per-request window. Set this to match the
+    # backend's real OLLAMA_NUM_PARALLEL. The deploy should pin the backend to 1
+    # (ansible ollama role); this is the proxy-side defense in depth. A per-backend
+    # override rides in PROXY_BACKENDS_JSON as `"num_parallel"`.
+    ollama_num_parallel: int = Field(default=1)
+
+    # Fail-loud verification of the delivered context (issue #33). After a call the
+    # proxy compares the backend's prompt_eval_count against the window it asked
+    # for; when the backend processed materially fewer prompt tokens than both what
+    # was sent and the per-request target, it truncated below the asked-for context
+    # (the NUM_PARALLEL division, or a misconfigured num_parallel). The tolerance is
+    # the slack that absorbs tokenizer drift between the proxy's tiktoken estimate
+    # and ollama's real count. When fail_on_context_truncation is set the request
+    # 502s loud instead of returning the short read; the default marks it
+    # (metric + finish_reason=length + structured log) but still returns content.
+    context_truncation_tolerance: float = Field(default=0.15)
+    fail_on_context_truncation: bool = Field(default=False)
+
     # Observability wiring (leg 04 step 1).
     sentry_dsn: str = Field(default="")
     otel_exporter_otlp_endpoint: str = Field(default="")

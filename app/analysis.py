@@ -159,6 +159,46 @@ def verify_action_claim(
     return False, "ungrounded_action_claim"
 
 
+def detect_context_truncation(
+    prompt_tokens_sent: int,
+    prompt_eval_count: int,
+    target_ctx: int,
+    tolerance: float = 0.15,
+) -> bool:
+    """Return whether the backend delivered a shorter context than asked for.
+
+    The flagship ``num_ctx`` injection stops ollama's default 32k cliff, but a
+    backend serving ``OLLAMA_NUM_PARALLEL > 1`` loads ``num_ctx`` as the model's
+    *total* window and divides it across the parallel slots, so a single request's
+    usable window is ``num_ctx / NUM_PARALLEL`` - the injected number silently
+    halved (or worse) (issue #33). This is the exact silent-truncation failure the
+    proxy exists to kill, pushed one layer down, so it must be surfaced loud.
+
+    The signature is a ``prompt_eval_count`` that came back materially below *both*:
+
+    * ``target_ctx`` - the per-request window the proxy asked each slot to deliver
+      (the derived ``num_ctx``), and
+    * ``prompt_tokens_sent`` - the proxy's own token count of the prompt it sent.
+
+    The first says the delivered window fell short of the ask; the second says the
+    prompt had more to show than the backend processed (so the shortfall is real
+    truncation, not just a small prompt that fit). ``tolerance`` is the slack that
+    absorbs tokenizer drift between the proxy's tiktoken estimate and ollama's real
+    count, so a prompt that merely filled its window is never mistaken for a clip -
+    the NUM_PARALLEL division produces a ~50% shortfall, far past any drift.
+
+    Returns ``False`` when there is no signal to judge (``prompt_eval_count`` of 0,
+    which openai-dialect backends and some paths report, or a non-positive
+    ``target_ctx``).
+    """
+    if prompt_eval_count <= 0 or target_ctx <= 0:
+        return False
+    slack = 1.0 - max(0.0, min(tolerance, 1.0))
+    delivered_below_ask = prompt_eval_count < target_ctx * slack
+    prompt_wanted_more = prompt_eval_count < prompt_tokens_sent * slack
+    return delivered_below_ask and prompt_wanted_more
+
+
 def apply_context_budget(
     logical_model: str,
     messages: list[dict[str, Any]],

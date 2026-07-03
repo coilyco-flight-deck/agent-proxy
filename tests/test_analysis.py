@@ -5,9 +5,63 @@ from app.analysis import (
     apply_context_budget,
     count_message_tokens,
     count_tokens,
+    detect_context_truncation,
     fit_to_budget,
     verify_action_claim,
 )
+
+# --- delivered-context truncation discriminator (issue #33) ----------------- #
+#
+# The live evidence: qwen3:4b on a NUM_PARALLEL=2 backend, ~100k-token prompt,
+# injected num_ctx halved to a per-request window. The proxy asks for `target`
+# and the backend delivers `target / NUM_PARALLEL`.
+
+
+def test_detect_flags_the_halved_window():
+    # num_ctx=49152 injected, NUM_PARALLEL=2 -> prompt capped at 24578, prompt was
+    # far larger. This is the exact silent halving the proxy must surface.
+    assert detect_context_truncation(
+        prompt_tokens_sent=48000, prompt_eval_count=24578, target_ctx=49152
+    )
+
+
+def test_detect_flags_the_quartered_window():
+    # NUM_PARALLEL=4 (or worse): the shortfall only widens.
+    assert detect_context_truncation(
+        prompt_tokens_sent=48000, prompt_eval_count=12290, target_ctx=49152
+    )
+
+
+def test_detect_passes_a_full_window_delivery():
+    # NUM_PARALLEL=1: a 55k request rides the full injected window (prompt_eval_count
+    # ~= num_ctx). Not truncation - the window was delivered as asked.
+    assert not detect_context_truncation(
+        prompt_tokens_sent=48128, prompt_eval_count=49151, target_ctx=49152
+    )
+
+
+def test_detect_passes_a_small_prompt_that_fit():
+    # A short prompt processed in full sits well below num_ctx but was never
+    # clipped - the prompt simply had nothing more to show.
+    assert not detect_context_truncation(
+        prompt_tokens_sent=5000, prompt_eval_count=5000, target_ctx=49152
+    )
+
+
+def test_detect_tolerates_tokenizer_drift():
+    # tiktoken estimate (5000) vs ollama's real count (4700) differ by tokenizer,
+    # not truncation - the default 15% slack must not flag it.
+    assert not detect_context_truncation(
+        prompt_tokens_sent=5000, prompt_eval_count=4700, target_ctx=49152
+    )
+
+
+def test_detect_no_signal_when_eval_count_zero():
+    # openai-dialect backends / paths that report no prompt_eval_count give no
+    # signal to judge - never a false positive.
+    assert not detect_context_truncation(
+        prompt_tokens_sent=48000, prompt_eval_count=0, target_ctx=49152
+    )
 
 
 def test_count_tokens_nonzero():

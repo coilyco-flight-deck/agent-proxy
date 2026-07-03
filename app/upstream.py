@@ -37,6 +37,9 @@ class UpstreamResult:
     prompt_eval_count: int = 0
     eval_count: int = 0
     done_reason: str = "stop"
+    # Set by dispatch (issue #33) when the backend delivered a shorter context than
+    # asked for - the OLLAMA_NUM_PARALLEL division. Surfaced loud, never silent.
+    context_truncated: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -58,14 +61,22 @@ async def aclose() -> None:
         _client = None
 
 
-def _inject_options(base: dict[str, Any] | None, num_ctx: int) -> dict[str, Any]:
+def _inject_options(
+    base: dict[str, Any] | None, num_ctx: int, num_parallel: int = 1
+) -> dict[str, Any]:
     """Return a fresh options dict with the model's safe ``num_ctx`` injected.
 
     The injected ``num_ctx`` always wins - it is the whole point of the proxy, so
     a caller-supplied value never overrides the model's proven-safe ceiling.
+
+    ollama loads ``num_ctx`` as the model's *total* context and splits it across
+    ``OLLAMA_NUM_PARALLEL`` slots, so the usable per-request window is
+    ``num_ctx / NUM_PARALLEL`` (issue #33). To keep each request's window equal to
+    the intended ``num_ctx``, the injected value is scaled by the backend's
+    ``num_parallel``; with the default (1) the injected value is unchanged.
     """
     opts = dict(base or {})
-    opts["num_ctx"] = num_ctx
+    opts["num_ctx"] = num_ctx * max(num_parallel, 1)
     return opts
 
 
@@ -128,7 +139,7 @@ async def chat(
     """Non-streaming upstream call with the safe context applied where valid."""
     body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": False}
     if backend.injects_num_ctx:
-        body["options"] = _inject_options(options, num_ctx)
+        body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
     elif options:
         body.update(options)
     if tools:
@@ -192,7 +203,7 @@ async def chat_stream(
     """Streaming upstream call, normalized to the proxy's internal chunk shape."""
     body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": True}
     if backend.injects_num_ctx:
-        body["options"] = _inject_options(options, num_ctx)
+        body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
     elif options:
         body.update(options)
     if tools:
@@ -265,7 +276,7 @@ async def generate(
     """Non-streaming native ``/api/generate`` for the ``/v1/completions`` surface."""
     body: dict[str, Any] = {"model": backend.ollama_tag, "prompt": prompt, "stream": False}
     if backend.injects_num_ctx:
-        body["options"] = _inject_options(options, num_ctx)
+        body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
     elif options:
         body.update(options)
     try:

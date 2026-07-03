@@ -49,6 +49,12 @@ llm_truncation_avoided_total = Counter(
 llm_validation_failures_total = Counter(
     "llm_validation_failures_total", "Responses rejected by validation", ["logical_model", "reason"]
 )
+llm_context_truncated_total = Counter(
+    "llm_context_truncated_total",
+    "Responses whose backend delivered a shorter context than the proxy asked for "
+    "(the OLLAMA_NUM_PARALLEL division, issue #33)",
+    ["logical_model", "backend"],
+)
 llm_prompt_tokens = Histogram(
     "llm_prompt_tokens",
     "Prompt tokens forwarded upstream (post-guard)",

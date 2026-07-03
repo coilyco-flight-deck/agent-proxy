@@ -38,6 +38,11 @@ class Backend:
     health_path: str | None = None
     injects_num_ctx: bool = True
     timeout: float | None = None  # None -> use the global request_timeout.
+    # The backend's OLLAMA_NUM_PARALLEL (issue #33). ollama divides an injected
+    # num_ctx across this many slots, so the client multiplies the injected value
+    # by it to keep the per-request window intact. 1 means "backend serves one
+    # slot" (the intended, ansible-pinned deploy) and injection is unchanged.
+    num_parallel: int = 1
 
 
 @dataclass
@@ -109,6 +114,7 @@ def _primary_base_url() -> str:
 
 def _backends_for_tag(tag: str) -> list[Backend]:
     """Build the fallback chain for ``tag`` by stamping it onto every spec."""
+    default_parallel = get_settings().ollama_num_parallel
     out: list[Backend] = []
     for spec in _backend_specs():
         out.append(
@@ -121,6 +127,7 @@ def _backends_for_tag(tag: str) -> list[Backend]:
                 health_path=spec.get("health_path"),
                 injects_num_ctx=spec.get("injects_num_ctx", True),
                 timeout=spec.get("timeout"),
+                num_parallel=int(spec.get("num_parallel", default_parallel) or 1),
             )
         )
     return out

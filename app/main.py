@@ -36,7 +36,7 @@ from .obs import (
     metrics_text,
 )
 from .queue import QueueBusy, get_queue
-from .resilience import AllBackendsFailed
+from .resilience import AllBackendsFailed, ContextTruncated
 
 # obs is wired at import (app.obs runs setup_observability at module load).
 
@@ -109,7 +109,11 @@ def _options_from_openai(body: dict[str, Any]) -> dict[str, Any]:
 def _finish_reason(result: upstream.UpstreamResult) -> str:
     if result.tool_calls:
         return "tool_calls"
-    return "length" if result.done_reason == "length" else "stop"
+    # A backend-cut context (issue #33) is a length limit, surfaced as such so a
+    # harness reading finish_reason sees the short read instead of a silent "stop".
+    if result.context_truncated or result.done_reason == "length":
+        return "length"
+    return "stop"
 
 
 def _openai_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -338,6 +342,16 @@ async def chat_completions(request: Request) -> Response:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
+    except ContextTruncated as exc:
+        # Opt-in hard fail (issue #33): the backend cut the context below the ask.
+        llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
+        log.warning(
+            "request.context_truncated",
+            **trace_ctx.attrs(),
+            outcome="context-truncated",
+            error=str(exc),
+        )
+        return _error(502, str(exc), "context_truncated")
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
         log.warning("request.failed", **trace_ctx.attrs(), outcome="failed", error=str(exc))
@@ -405,6 +419,16 @@ async def completions(request: Request) -> Response:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
+    except ContextTruncated as exc:
+        # Opt-in hard fail (issue #33): the backend cut the context below the ask.
+        llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
+        log.warning(
+            "request.context_truncated",
+            **trace_ctx.attrs(),
+            outcome="context-truncated",
+            error=str(exc),
+        )
+        return _error(502, str(exc), "context_truncated")
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
         log.warning("request.failed", **trace_ctx.attrs(), outcome="failed", error=str(exc))

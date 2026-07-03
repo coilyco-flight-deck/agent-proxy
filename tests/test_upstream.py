@@ -74,6 +74,19 @@ async def test_caller_cannot_override_num_ctx(monkeypatch, backend):
     assert fake.last_body["options"]["num_ctx"] == 49152
 
 
+async def test_num_ctx_scaled_by_num_parallel(monkeypatch):
+    # issue #33: ollama divides an injected num_ctx across OLLAMA_NUM_PARALLEL
+    # slots, so the client injects target*num_parallel to keep the per-request
+    # window equal to the derived num_ctx. A NUM_PARALLEL=2 backend gets double.
+    parallel_backend = Backend(
+        name="tower", url="http://tower:11434", ollama_tag="qwen3:4b", num_parallel=2
+    )
+    fake = _CapturingClient({"message": {"content": "ok"}})
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+    await upstream.chat(parallel_backend, num_ctx=49152, messages=[])
+    assert fake.last_body["options"]["num_ctx"] == 98304
+
+
 async def test_thinking_is_parsed(monkeypatch, backend):
     fake = _CapturingClient({"message": {"content": "", "thinking": "reasoning..."}})
     monkeypatch.setattr(upstream, "get_client", lambda: fake)

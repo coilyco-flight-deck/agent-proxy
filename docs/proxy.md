@@ -81,9 +81,20 @@ secret is committed. Key knobs:
   never allocates more KV cache than the tower can carry.
 * `PROXY_NUM_CTX_HEADROOM` - tokens reserved below the ceiling for the completion
   (default **1024**).
+* `PROXY_OLLAMA_NUM_PARALLEL` - the backend's `OLLAMA_NUM_PARALLEL` (default **1**).
+  ollama divides an injected `num_ctx` across this many slots, so the proxy injects
+  `derived_num_ctx * num_parallel` to keep each request's window intact. Set it to
+  match the backend; a per-backend override rides in `PROXY_BACKENDS_JSON` as
+  `"num_parallel"`. See the coupling section below.
+* `PROXY_CONTEXT_TRUNCATION_TOLERANCE` - slack (default **0.15**) that absorbs
+  tokenizer drift in the fail-loud delivered-context check, so a prompt that merely
+  filled its window is never mistaken for a clip.
+* `PROXY_FAIL_ON_CONTEXT_TRUNCATION` - when set, a detected short-context delivery
+  502s loud instead of returning the marked short read (default **off**).
 * `PROXY_BACKENDS_JSON` / `PROXY_BACKENDS_FILE` - a JSON array of backend specs
-  (`{"name","url","dialect"?,"chat_path"?,...}`, no tag - the tag comes from the
-  request) to supply a fallback chain beyond the single built-in tower backend.
+  (`{"name","url","dialect"?,"chat_path"?,"num_parallel"?,...}`, no tag - the tag
+  comes from the request) to supply a fallback chain beyond the single built-in
+  tower backend.
 * `PROXY_WORKER_COUNT`, `PROXY_QUEUE_MAXSIZE` - queue / worker sizing.
 * `PROXY_MAX_RETRIES`, `PROXY_CIRCUIT_FAIL_THRESHOLD`, `PROXY_CIRCUIT_COOLDOWN` -
   resilience knobs.
@@ -111,6 +122,36 @@ value even if a client sends its own - which is the whole point of the proxy.
 The larger litellm-as-core re-core that supersedes this routing layer entirely
 is tracked in `coilyco-bridge/agentic-os-hardware#25` and is compatible with this
 phase-1 change.
+
+### The OLLAMA_NUM_PARALLEL coupling (issue #33)
+
+The `num_ctx` the proxy injects is the model's **total** context. ollama then
+**divides it across `OLLAMA_NUM_PARALLEL` slots**, so a single request's usable
+window is `num_ctx / NUM_PARALLEL`. On a backend running `OLLAMA_NUM_PARALLEL=2`,
+an injected `num_ctx=49152` delivers only ~24576 tokens per request - the flagship
+fix silently halved, one layer down. Measured live (Windows tower, `qwen3:4b`,
+`OLLAMA_NUM_PARALLEL=2`): `num_ctx=49152 -> prompt_eval_count=24578`,
+`num_ctx=65536 -> 32770`, each exactly `num_ctx/2 + 2`.
+
+The proxy defends in depth:
+
+* **Compensate** - it injects `derived_num_ctx * num_parallel`
+  (`PROXY_OLLAMA_NUM_PARALLEL`, or per-backend `num_parallel`), so each slot still
+  delivers the intended per-request window. Note the VRAM cost: total KV cache
+  scales with `num_ctx * num_parallel`, so a >1-slot backend that keeps the full
+  window per request needs proportionally more VRAM - which is why the *real* fix
+  is pinning the backend to one slot.
+* **Fail loud** - after every ollama call it compares the backend's
+  `prompt_eval_count` against both the sent prompt size and the target window
+  (`app/analysis.detect_context_truncation`). A materially short delivery marks the
+  result (`finish_reason=length`), increments `llm_context_truncated_total`, and
+  logs `dispatch.context_truncated`; `PROXY_FAIL_ON_CONTEXT_TRUNCATION` makes it a
+  hard 502. This catches a misconfigured `num_parallel` - the compensation being
+  wrong - instead of reporting a silent short read as success.
+
+The deployment half - pinning `OLLAMA_NUM_PARALLEL=1` on the proxy's ollama
+backends so a slot gets the whole window - belongs in the ansible ollama role, not
+this repo.
 
 ## Running and proving locally
 
@@ -146,7 +187,7 @@ JSON. The measured result and its reproduction command live in
 `llm_requests_total`, `llm_queue_depth`, `llm_queue_rejected_total`,
 `llm_retries_total`, `llm_fallbacks_total`, `llm_circuit_state`,
 `llm_truncation_avoided_total`, `llm_validation_failures_total`,
-`llm_prompt_tokens`, `llm_upstream_latency_seconds`.
+`llm_context_truncated_total`, `llm_prompt_tokens`, `llm_upstream_latency_seconds`.
 
 ## Out of scope here
 

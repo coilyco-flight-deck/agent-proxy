@@ -28,11 +28,12 @@ from enum import IntEnum
 from typing import Any, AsyncIterator
 
 from .config import get_settings
-from .analysis import verify_action_claim
+from .analysis import count_message_tokens, detect_context_truncation, verify_action_claim
 from .models import Backend, LogicalModel, resolve
 from .obs import (
     RequestTraceContext,
     llm_circuit_state,
+    llm_context_truncated_total,
     llm_fallbacks_total,
     llm_retries_total,
     llm_upstream_latency_seconds,
@@ -47,6 +48,16 @@ from .upstream import UpstreamError, UpstreamResult
 
 class AllBackendsFailed(Exception):
     """Every backend in the chain was exhausted or open."""
+
+
+class ContextTruncated(Exception):
+    """The backend delivered a shorter context than the proxy asked for (issue #33).
+
+    Raised only when ``PROXY_FAIL_ON_CONTEXT_TRUNCATION`` is set - the opt-in hard
+    fail that turns a silently-halved window (the ``OLLAMA_NUM_PARALLEL`` division)
+    into a loud 502 instead of returning the short read. The default path marks the
+    result (metric + ``finish_reason=length`` + structured log) and returns it.
+    """
 
 
 class UnknownModel(Exception):
@@ -204,6 +215,65 @@ breakers = CircuitBreakerRegistry()
 
 
 # --------------------------------------------------------------------------- #
+# Delivered-context verification (issue #33)
+# --------------------------------------------------------------------------- #
+
+
+def _verify_delivered_context(
+    model: LogicalModel,
+    backend: Backend,
+    result: UpstreamResult,
+    prompt_tokens_sent: int,
+    trace_ctx: RequestTraceContext | None,
+    attempt_span: Any,
+) -> None:
+    """Fail loud when the backend delivered less context than the proxy asked for.
+
+    Only ollama backends (``injects_num_ctx``) are subject to the
+    ``OLLAMA_NUM_PARALLEL`` division; an openai-dialect backend carries its window
+    at launch and reports usage differently, so it is skipped. On detection this
+    marks the result (so ``finish_reason`` becomes ``length``, never a silent short
+    read), increments ``llm_context_truncated_total``, and emits a structured
+    warning; when ``fail_on_context_truncation`` is set it raises
+    :class:`ContextTruncated` for a hard 502 instead.
+    """
+    if not backend.injects_num_ctx:
+        return
+    settings = get_settings()
+    if not detect_context_truncation(
+        prompt_tokens_sent,
+        result.prompt_eval_count,
+        model.num_ctx,
+        settings.context_truncation_tolerance,
+    ):
+        return
+    result.context_truncated = True
+    llm_context_truncated_total.labels(logical_model=model.name, backend=backend.name).inc()
+    log.warning(
+        "dispatch.context_truncated",
+        **request_log_fields(
+            trace_ctx,
+            backend=backend.name,
+            outcome="context-truncated",
+            prompt_tokens_sent=prompt_tokens_sent,
+            prompt_eval_count=result.prompt_eval_count,
+            target_num_ctx=model.num_ctx,
+            num_parallel=backend.num_parallel,
+        ),
+    )
+    if attempt_span is not None:
+        attempt_span.set_attribute("agentproxy.context_truncated", True)
+        attempt_span.set_attribute("agentproxy.target_num_ctx", model.num_ctx)
+    if settings.fail_on_context_truncation:
+        raise ContextTruncated(
+            f"{model.name}: backend {backend.name} delivered {result.prompt_eval_count} "
+            f"prompt tokens against a {model.num_ctx}-token window - effective context "
+            f"was cut below the ask (OLLAMA_NUM_PARALLEL division). Pin the backend to "
+            f"OLLAMA_NUM_PARALLEL=1 or set PROXY_OLLAMA_NUM_PARALLEL to match it."
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Dispatch with resilience
 # --------------------------------------------------------------------------- #
 
@@ -222,6 +292,11 @@ async def dispatch(
     last_error: str = "no backends"
     tracer = get_tracer()
     trace_attrs = trace_ctx.attrs() if trace_ctx else None
+    # The proxy's own count of the prompt it sends, held once for the whole
+    # dispatch (it is identical across attempts and backends): the reference the
+    # delivered-context check (issue #33) compares each backend's prompt_eval_count
+    # against to catch a silently-halved window.
+    prompt_tokens_sent = count_message_tokens(messages)
 
     for idx, backend in enumerate(model.backends):
         if not breakers.allow(backend):
@@ -303,6 +378,9 @@ async def dispatch(
                 ok, reason = validate_response(result)
                 if ok:
                     breakers.record_success(backend)
+                    _verify_delivered_context(
+                        model, backend, result, prompt_tokens_sent, trace_ctx, attempt_span
+                    )
                     log.info(
                         "dispatch.ok",
                         **request_log_fields(
