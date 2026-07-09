@@ -33,6 +33,8 @@ jobs:
       image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.195.0
     steps:
       - uses: actions/checkout@v4
+      - name: Install dev dependencies
+        run: uv sync --extra dev
       - name: Tests (ward test)
         run: ward exec test
       - name: Lint (ruff)
