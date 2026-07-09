@@ -16,7 +16,7 @@ from functools import lru_cache
 import re
 from typing import Any
 
-from .obs import llm_truncation_avoided_total
+from .obs import InstrumentedAction, emit_instrumented_action, llm_truncation_avoided_total
 
 # Small per-message overhead approximating the chat template's role/delimiter
 # tokens. tiktoken's cl100k_base is a close-enough proxy for ollama's tokenizer
@@ -244,7 +244,22 @@ def apply_context_budget(
         # the model will cap it - so do not claim we did.
         return result, new_total, False
 
-    llm_truncation_avoided_total.labels(logical_model=logical_model).inc()
+    emit_instrumented_action(
+        InstrumentedAction(
+            log_event="request.prompt_trimmed",
+            metric=lambda: llm_truncation_avoided_total.labels(logical_model=logical_model).inc(),
+            span_event="request.prompt_trimmed",
+            fields={
+                "logical_model": logical_model,
+                "original_token_count": total,
+                "final_token_count": new_total,
+                "budget_tokens": budget,
+                "target_num_ctx": num_ctx,
+                "headroom_tokens": headroom,
+                "dropped_message_count": dropped,
+            },
+        )
+    )
     return result, new_total, True
 
 

@@ -4,7 +4,14 @@ import json
 
 import pytest
 
-from app.obs import _otlp_http_traces_url, get_logger, init_sentry, metrics_text
+from app.obs import (
+    InstrumentedAction,
+    _otlp_http_traces_url,
+    emit_instrumented_action,
+    get_logger,
+    init_sentry,
+    metrics_text,
+)
 
 
 @pytest.mark.parametrize(
@@ -36,6 +43,43 @@ def test_get_logger_emits_json(capsys):
     payload = json.loads(line)
     assert payload["event"] == "hello"
     assert payload["k"] == 1
+
+
+def test_emit_instrumented_action_hits_log_metric_and_span(monkeypatch, capsys):
+    events = []
+    attributes = {}
+    metric_calls = []
+
+    class Span:
+        def is_recording(self):
+            return True
+
+        def add_event(self, name, attrs):
+            events.append((name, attrs))
+
+        def set_attribute(self, key, value):
+            attributes[key] = value
+
+    monkeypatch.setattr("app.obs._current_span", lambda: Span())
+
+    emit_instrumented_action(
+        InstrumentedAction(
+            log_event="request.prompt_trimmed",
+            metric=lambda: metric_calls.append(1),
+            span_event="request.prompt_trimmed",
+            fields={"logical_model": "m", "dropped_message_count": 2},
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["event"] == "request.prompt_trimmed"
+    assert payload["logical_model"] == "m"
+    assert metric_calls == [1]
+    assert events == [
+        ("request.prompt_trimmed", {"logical_model": "m", "dropped_message_count": 2})
+    ]
+    assert attributes["logical_model"] == "m"
+    assert attributes["dropped_message_count"] == 2
 
 
 def test_metrics_text_exposes_leg04_names():

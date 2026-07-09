@@ -74,7 +74,7 @@ def test_count_tokens_accepts_message_list():
     assert count_tokens(msgs) == count_message_tokens(msgs) > 0
 
 
-def test_fit_to_budget_trims_over_budget_prompt():
+def test_fit_to_budget_trims_over_budget_prompt(monkeypatch):
     filler = "word " * 500  # ~500 tokens each
     msgs = [
         {"role": "system", "content": "SYSTEM FRAMING"},
@@ -83,10 +83,23 @@ def test_fit_to_budget_trims_over_budget_prompt():
         {"role": "user", "content": "the live question"},
     ]
     num_ctx = 600
+    original_tokens = count_tokens(msgs)
+    events = []
+    attributes = {}
+
+    class Span:
+        def is_recording(self):
+            return True
+
+        def add_event(self, name, attrs):
+            events.append((name, attrs))
+
+        def set_attribute(self, key, value):
+            attributes[key] = value
 
     metric = obs.llm_truncation_avoided_total.labels(logical_model="fit-test")
     before = metric._value.get()
-
+    monkeypatch.setattr("app.obs._current_span", lambda: Span())
     out = fit_to_budget(msgs, num_ctx, logical_model="fit-test")
 
     # The trimmed prompt fits the safe fraction of the budget.
@@ -96,6 +109,24 @@ def test_fit_to_budget_trims_over_budget_prompt():
     assert out[-1]["content"] == "the live question"
     # The counter incremented exactly once.
     assert metric._value.get() == before + 1
+    # The wrapper emitted a structured event and annotated the current span.
+    expected_dropped = len(msgs) - len(out)
+    assert events == [
+        (
+            "request.prompt_trimmed",
+            {
+                "logical_model": "fit-test",
+                "original_token_count": original_tokens,
+                "final_token_count": count_tokens(out),
+                "budget_tokens": 600 - int(600 * 0.1),
+                "target_num_ctx": 600,
+                "headroom_tokens": 60,
+                "dropped_message_count": expected_dropped,
+            },
+        )
+    ]
+    assert attributes["logical_model"] == "fit-test"
+    assert attributes["dropped_message_count"] == expected_dropped
 
 
 def test_under_budget_is_untouched():

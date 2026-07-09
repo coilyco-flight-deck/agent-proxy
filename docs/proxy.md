@@ -67,6 +67,14 @@ live testing against the tower:
   final content did real work - it is surfaced as a length-limited response, not
   rerolled into a 502.
 
+The prompt-budget guard and the delivered-context check now both use the shared
+instrumentation wrapper. Prompt trimming emits a structured `request.prompt_trimmed`
+event, increments `llm_truncation_avoided_total`, and adds a span event with the
+trimmed token counts and drop count when tracing is active. Delivered-context
+truncation keeps the existing `dispatch.context_truncated` warning and metric,
+and records the same action through the wrapper so the log, metric, and span
+stay aligned.
+
 ## Configuration
 
 All settings read from the environment with prefix `PROXY_` and fall back to AWS

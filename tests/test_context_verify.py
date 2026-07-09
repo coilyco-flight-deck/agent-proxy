@@ -12,7 +12,7 @@ import pytest
 from app import resilience, upstream
 from app.config import Settings
 from app.models import Backend, LogicalModel
-from app.obs import llm_context_truncated_total
+from app.obs import RequestTraceContext, llm_context_truncated_total
 from app.resilience import ContextTruncated
 from app.upstream import UpstreamResult
 
@@ -43,6 +43,23 @@ async def test_truncation_is_marked_and_counted(monkeypatch):
     _use_settings(monkeypatch)  # defaults: mark, do not hard-fail
     backend = Backend(name="b-parallel", url="http://x", ollama_tag="t", num_parallel=2)
     model = LogicalModel("qwen3:4b", 49152, [backend])
+    events = []
+    attributes = {}
+
+    class Span:
+        def is_recording(self):
+            return True
+
+        def add_event(self, name, attrs):
+            events.append((name, attrs))
+
+        def set_attribute(self, key, value):
+            attributes[key] = value
+
+    monkeypatch.setattr("app.obs._current_span", lambda: Span())
+    trace_ctx = RequestTraceContext(
+        logical_model=model.name, request_model=model.name, request_kind="chat"
+    )
 
     async def chat(be, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
         return _truncated_result()
@@ -50,11 +67,31 @@ async def test_truncation_is_marked_and_counted(monkeypatch):
     monkeypatch.setattr(upstream, "chat", chat)
 
     before = _counter(model.name, backend.name)
-    result = await resilience.dispatch(model, [{"role": "user", "content": "hi"}])
+    result = await resilience.dispatch(
+        model, [{"role": "user", "content": "hi"}], trace_ctx=trace_ctx
+    )
 
     assert result.context_truncated is True  # surfaced, not silent
     assert result.content == "ok"  # content still returned in the default mode
     assert _counter(model.name, backend.name) - before == 1
+    assert events == [
+        (
+            "dispatch.context_truncated",
+            {
+                "logical_model": model.name,
+                "request_model": model.name,
+                "request_kind": "chat",
+                "backend": backend.name,
+                "outcome": "context-truncated",
+                "prompt_tokens_sent": 48000,
+                "prompt_eval_count": 24578,
+                "target_num_ctx": 49152,
+                "num_parallel": 2,
+            },
+        )
+    ]
+    assert attributes["backend"] == backend.name
+    assert attributes["target_num_ctx"] == 49152
 
 
 async def test_hard_fail_raises_when_configured(monkeypatch):

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import dataclass, field
+from typing import Callable
 
 import structlog
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
@@ -161,6 +162,15 @@ class RequestTraceContext:
         return data
 
 
+@dataclass(frozen=True)
+class InstrumentedAction:
+    log_event: str
+    metric: Callable[[], None]
+    span_event: str
+    fields: dict[str, object]
+    level: str = "info"
+
+
 def request_log_fields(ctx: RequestTraceContext | None, **fields: object) -> dict[str, object]:
     # ctx is optional at the call sites (dispatch/dispatch_stream default it to
     # None); when absent, emit just the ad-hoc fields rather than crashing.
@@ -174,6 +184,36 @@ def request_log_fields(ctx: RequestTraceContext | None, **fields: object) -> dic
         out.update(ctx.extra)
     out.update(fields)
     return out
+
+
+def _current_span():
+    try:
+        from opentelemetry import trace
+    except Exception:
+        return None
+    try:
+        span = trace.get_current_span()
+    except Exception:
+        return None
+    if span is None:
+        return None
+    if not getattr(span, "is_recording", lambda: False)():
+        return None
+    return span
+
+
+def emit_instrumented_action(action: InstrumentedAction) -> None:
+    """Emit the log, metric, and current-span event for one instrumented action."""
+    getattr(log, action.level)(action.log_event, **action.fields)
+    action.metric()
+
+    span = _current_span()
+    if span is None:
+        return
+
+    span.add_event(action.span_event, action.fields)
+    for key, value in action.fields.items():
+        span.set_attribute(key, value)
 
 
 def _configure_sentry(dsn: str, service_name: str) -> None:

@@ -31,7 +31,9 @@ from .config import get_settings
 from .analysis import count_message_tokens, detect_context_truncation, verify_action_claim
 from .models import Backend, LogicalModel, resolve
 from .obs import (
+    InstrumentedAction,
     RequestTraceContext,
+    emit_instrumented_action,
     llm_circuit_state,
     llm_context_truncated_total,
     llm_fallbacks_total,
@@ -248,17 +250,22 @@ def _verify_delivered_context(
     ):
         return
     result.context_truncated = True
-    llm_context_truncated_total.labels(logical_model=model.name, backend=backend.name).inc()
-    log.warning(
-        "dispatch.context_truncated",
-        **request_log_fields(
-            trace_ctx,
-            backend=backend.name,
-            outcome="context-truncated",
-            prompt_tokens_sent=prompt_tokens_sent,
-            prompt_eval_count=result.prompt_eval_count,
-            target_num_ctx=model.num_ctx,
-            num_parallel=backend.num_parallel,
+    emit_instrumented_action(
+        InstrumentedAction(
+            log_event="dispatch.context_truncated",
+            metric=lambda: llm_context_truncated_total.labels(
+                logical_model=model.name, backend=backend.name
+            ).inc(),
+            span_event="dispatch.context_truncated",
+            fields=request_log_fields(
+                trace_ctx,
+                backend=backend.name,
+                outcome="context-truncated",
+                prompt_tokens_sent=prompt_tokens_sent,
+                prompt_eval_count=result.prompt_eval_count,
+                target_num_ctx=model.num_ctx,
+                num_parallel=backend.num_parallel,
+            ),
         ),
     )
     if attempt_span is not None:
