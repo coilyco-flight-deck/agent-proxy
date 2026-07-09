@@ -31,6 +31,30 @@ class _CapturingClient:
         return _FakeResponse(self.payload)
 
 
+class _Span:
+    def __init__(self, name, sink):
+        self.name = name
+        self.sink = sink
+
+    def __enter__(self):
+        self.sink.append((self.name, {}))
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def set_attribute(self, key, value):
+        self.sink[-1][1][key] = value
+
+
+class _Tracer:
+    def __init__(self, sink):
+        self.sink = sink
+
+    def start_as_current_span(self, name):
+        return _Span(name, self.sink)
+
+
 @pytest.fixture
 def backend():
     return Backend(name="tower", url="http://tower:11434", ollama_tag="qwen3:30b-a3b")
@@ -120,3 +144,30 @@ async def test_openai_backend_uses_chat_completions(monkeypatch, openai_backend)
     assert result.thinking == "why"
     assert result.prompt_eval_count == 12
     assert result.eval_count == 7
+
+
+async def test_span_attrs_flow_to_upstream_span(monkeypatch, backend):
+    spans = []
+    tracer = _Tracer(spans)
+    fake = _CapturingClient({"message": {"content": "ok"}})
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+    monkeypatch.setattr(upstream, "get_tracer", lambda: tracer)
+
+    await upstream.chat(
+        backend,
+        num_ctx=32768,
+        messages=[],
+        span_attrs={
+            "agentproxy.request_id": "req-1",
+            "ward.run_id": "run-1",
+            "ward.target_repo": "repo-1",
+            "ward.issue_ref": "issue-1",
+        },
+    )
+
+    attrs = dict(spans[-1][1])
+    assert spans[-1][0] == "upstream.chat"
+    assert attrs["agentproxy.request_id"] == "req-1"
+    assert attrs["ward.run_id"] == "run-1"
+    assert attrs["ward.target_repo"] == "repo-1"
+    assert attrs["ward.issue_ref"] == "issue-1"

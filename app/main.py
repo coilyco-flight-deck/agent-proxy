@@ -40,6 +40,20 @@ from .resilience import AllBackendsFailed, ContextTruncated
 
 # obs is wired at import (app.obs runs setup_observability at module load).
 
+_TRACE_METADATA_FIELDS: dict[str, tuple[str, ...]] = {
+    "agentproxy.request_id": ("x-request-id", "request_id", "agentproxy.request_id"),
+    "ward.run_id": ("x-ward-run-id", "ward.run_id"),
+    "ward.container_name": ("x-ward-container-name", "ward.container_name"),
+    "ward.role": ("x-ward-role", "ward.role"),
+    "ward.harness": ("x-ward-harness", "ward.harness"),
+    "ward.target_repo": ("x-ward-target-repo", "ward.target_repo"),
+    "ward.issue_ref": ("x-ward-issue-ref", "ward.issue_ref"),
+    "ward.workflow": ("x-ward-workflow", "ward.workflow"),
+    "ward.context_level": ("x-ward-context-level", "ward.context_level"),
+    "ward.version": ("x-ward-version", "ward.version"),
+    "agent.session_id": ("x-agent-session-id", "agent.session_id"),
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -164,6 +178,30 @@ def _error(status: int, message: str, err_type: str) -> JSONResponse:
     )
 
 
+def _request_trace_extra(
+    headers, metadata: Any = None, *, body_extra: dict[str, object] | None = None
+) -> dict[str, object]:
+    extra: dict[str, object] = {}
+    if isinstance(metadata, dict):
+        for target_key, source_keys in _TRACE_METADATA_FIELDS.items():
+            for source_key in source_keys:
+                if source_key not in metadata:
+                    continue
+                value = metadata.get(source_key)
+                if value is not None:
+                    extra[target_key] = value
+                    break
+    for target_key, source_keys in _TRACE_METADATA_FIELDS.items():
+        for source_key in source_keys:
+            value = headers.get(source_key)
+            if value:
+                extra[target_key] = value
+                break
+    if body_extra:
+        extra.update(body_extra)
+    return extra
+
+
 def _trace_context(
     model_name: str,
     request_model: str,
@@ -200,24 +238,12 @@ async def list_models() -> dict[str, Any]:
     }
 
 
-async def _stream_chat(model, messages, tools, options, model_name: str) -> StreamingResponse:
+async def _stream_chat(
+    model, messages, tools, options, model_name: str, *, trace_ctx: RequestTraceContext
+) -> StreamingResponse:
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
-    trace_ctx = _trace_context(
-        model.name,
-        model_name,
-        "chat",
-        extra=(
-            {
-                "agentproxy.messages": messages,
-                "agentproxy.tools": tools or [],
-                "agentproxy.options": options,
-            }
-            if is_trace_bodies_enabled()
-            else None
-        ),
-    )
     tracer = get_tracer()
 
     async def gen() -> AsyncIterator[str]:
@@ -302,12 +328,10 @@ async def chat_completions(request: Request) -> Response:
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
-    trace_ctx = _trace_context(
-        model.name,
-        model_name,
-        "chat",
-        request.headers.get("x-request-id", ""),
-        extra=(
+    trace_extra = _request_trace_extra(
+        request.headers,
+        body.get("metadata"),
+        body_extra=(
             {
                 "agentproxy.messages": messages,
                 "agentproxy.tools": tools or [],
@@ -317,11 +341,21 @@ async def chat_completions(request: Request) -> Response:
             else None
         ),
     )
+    request_id = request.headers.get("x-request-id", "") or str(
+        trace_extra.get("agentproxy.request_id", "")
+    )
+    trace_ctx = _trace_context(
+        model.name,
+        model_name,
+        "chat",
+        request_id,
+        extra=trace_extra,
+    )
     tracer = get_tracer()
 
     if stream:
         llm_requests_total.labels(logical_model=model.name, outcome="stream").inc()
-        return await _stream_chat(model, messages, tools, options, model.name)
+        return await _stream_chat(model, messages, tools, options, model.name, trace_ctx=trace_ctx)
 
     try:
         if tracer is None:
@@ -387,16 +421,24 @@ async def completions(request: Request) -> Response:
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
-    trace_ctx = _trace_context(
-        model.name,
-        model_name,
-        "completions",
-        request.headers.get("x-request-id", ""),
-        extra=(
+    trace_extra = _request_trace_extra(
+        request.headers,
+        body.get("metadata"),
+        body_extra=(
             {"agentproxy.prompt": prompt, "agentproxy.options": options}
             if is_trace_bodies_enabled()
             else None
         ),
+    )
+    request_id = request.headers.get("x-request-id", "") or str(
+        trace_extra.get("agentproxy.request_id", "")
+    )
+    trace_ctx = _trace_context(
+        model.name,
+        model_name,
+        "completions",
+        request_id,
+        extra=trace_extra,
     )
     tracer = get_tracer()
 

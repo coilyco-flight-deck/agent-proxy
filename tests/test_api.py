@@ -4,7 +4,7 @@ these run without the tower."""
 import pytest
 from fastapi.testclient import TestClient
 
-from app import models, upstream
+from app import models, resilience, upstream
 from app.main import app
 from app.upstream import UpstreamResult
 
@@ -57,6 +57,12 @@ class _Tracer:
 
     def start_as_current_span(self, name):
         return _Span(name, self.sink)
+
+
+def _span_attrs(spans, name):
+    matches = [attrs for span_name, attrs in spans if span_name == name]
+    assert matches, f"missing span {name}"
+    return matches[-1]
 
 
 def test_healthz(client):
@@ -132,6 +138,245 @@ def test_chat_completion_uses_tracing(monkeypatch):
         )
     assert resp.status_code == 200
     assert any(name == "request.chat" for name, _ in spans)
+
+
+def test_chat_completion_ingests_ward_headers(monkeypatch):
+    spans = []
+    tracer = _Tracer(spans)
+    monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.queue.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
+
+    async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        return UpstreamResult(
+            model=backend.ollama_tag, content="Paris", prompt_eval_count=42, eval_count=3
+        )
+
+    async def fake_catalog(_base_url):
+        return dict(CATALOG), True
+
+    monkeypatch.setattr(upstream, "chat", fake_chat)
+    monkeypatch.setattr(models, "_catalog", fake_catalog)
+    models.reset_catalog()
+    with TestClient(app) as c:
+        resp = c.post(
+            "/v1/chat/completions",
+            json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+            headers={
+                "x-request-id": "req-123",
+                "x-ward-run-id": "run-123",
+                "x-ward-container-name": "container-123",
+                "x-ward-role": "role-123",
+                "x-ward-harness": "harness-123",
+                "x-ward-target-repo": "repo-123",
+                "x-ward-issue-ref": "issue-123",
+                "x-ward-workflow": "workflow-123",
+                "x-ward-context-level": "2",
+                "x-ward-version": "v1",
+                "x-agent-session-id": "session-123",
+            },
+        )
+    assert resp.status_code == 200
+    attrs = _span_attrs(spans, "request.chat")
+    assert attrs["agentproxy.request_id"] == "req-123"
+    assert attrs["ward.run_id"] == "run-123"
+    assert attrs["ward.container_name"] == "container-123"
+    assert attrs["ward.role"] == "role-123"
+    assert attrs["ward.harness"] == "harness-123"
+    assert attrs["ward.target_repo"] == "repo-123"
+    assert attrs["ward.issue_ref"] == "issue-123"
+    assert attrs["ward.workflow"] == "workflow-123"
+    assert attrs["ward.context_level"] == "2"
+    assert attrs["ward.version"] == "v1"
+    assert attrs["agent.session_id"] == "session-123"
+    assert _span_attrs(spans, "queue.wait")["ward.run_id"] == "run-123"
+
+
+def test_chat_completion_body_metadata_fallback(monkeypatch):
+    spans = []
+    tracer = _Tracer(spans)
+    monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.queue.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
+
+    async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        return UpstreamResult(
+            model=backend.ollama_tag, content="Paris", prompt_eval_count=42, eval_count=3
+        )
+
+    async def fake_catalog(_base_url):
+        return dict(CATALOG), True
+
+    monkeypatch.setattr(upstream, "chat", fake_chat)
+    monkeypatch.setattr(models, "_catalog", fake_catalog)
+    models.reset_catalog()
+    with TestClient(app) as c:
+        resp = c.post(
+            "/v1/chat/completions",
+            json={
+                "model": "qwen3:4b",
+                "messages": [{"role": "user", "content": "hi"}],
+                "metadata": {
+                    "request_id": "req-body",
+                    "ward.run_id": "run-body",
+                    "ward.target_repo": "repo-body",
+                    "ward.issue_ref": "issue-body",
+                    "ward.harness": "harness-body",
+                    "agent.session_id": "session-body",
+                },
+            },
+        )
+    assert resp.status_code == 200
+    attrs = _span_attrs(spans, "request.chat")
+    assert attrs["agentproxy.request_id"] == "req-body"
+    assert attrs["ward.run_id"] == "run-body"
+    assert attrs["ward.target_repo"] == "repo-body"
+    assert attrs["ward.issue_ref"] == "issue-body"
+    assert attrs["ward.harness"] == "harness-body"
+    assert attrs["agent.session_id"] == "session-body"
+
+
+def test_chat_completion_headers_override_body_metadata(monkeypatch):
+    spans = []
+    tracer = _Tracer(spans)
+    monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.queue.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
+
+    async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        return UpstreamResult(
+            model=backend.ollama_tag, content="Paris", prompt_eval_count=42, eval_count=3
+        )
+
+    async def fake_catalog(_base_url):
+        return dict(CATALOG), True
+
+    monkeypatch.setattr(upstream, "chat", fake_chat)
+    monkeypatch.setattr(models, "_catalog", fake_catalog)
+    models.reset_catalog()
+    with TestClient(app) as c:
+        resp = c.post(
+            "/v1/chat/completions",
+            json={
+                "model": "qwen3:4b",
+                "messages": [{"role": "user", "content": "hi"}],
+                "metadata": {
+                    "request_id": "req-body",
+                    "ward.run_id": "run-body",
+                    "ward.target_repo": "repo-body",
+                    "ward.issue_ref": "issue-body",
+                    "agent.session_id": "session-body",
+                },
+            },
+            headers={
+                "x-request-id": "req-header",
+                "x-ward-run-id": "run-header",
+                "x-ward-target-repo": "repo-header",
+                "x-ward-issue-ref": "issue-header",
+                "x-agent-session-id": "session-header",
+            },
+        )
+    assert resp.status_code == 200
+    attrs = _span_attrs(spans, "request.chat")
+    assert attrs["agentproxy.request_id"] == "req-header"
+    assert attrs["ward.run_id"] == "run-header"
+    assert attrs["ward.target_repo"] == "repo-header"
+    assert attrs["ward.issue_ref"] == "issue-header"
+    assert attrs["agent.session_id"] == "session-header"
+
+
+def test_completions_body_metadata_fallback(monkeypatch):
+    spans = []
+    tracer = _Tracer(spans)
+    monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.queue.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
+
+    async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        return UpstreamResult(
+            model=backend.ollama_tag, content="Paris", prompt_eval_count=42, eval_count=3
+        )
+
+    async def fake_catalog(_base_url):
+        return dict(CATALOG), True
+
+    monkeypatch.setattr(upstream, "chat", fake_chat)
+    monkeypatch.setattr(models, "_catalog", fake_catalog)
+    models.reset_catalog()
+    with TestClient(app) as c:
+        resp = c.post(
+            "/v1/completions",
+            json={
+                "model": "qwen3:4b",
+                "prompt": "hello",
+                "metadata": {
+                    "request_id": "req-completions-body",
+                    "ward.run_id": "run-completions-body",
+                    "ward.target_repo": "repo-completions-body",
+                    "ward.issue_ref": "issue-completions-body",
+                },
+            },
+        )
+    assert resp.status_code == 200
+    attrs = _span_attrs(spans, "request.completions")
+    assert attrs["agentproxy.request_id"] == "req-completions-body"
+    assert attrs["ward.run_id"] == "run-completions-body"
+    assert attrs["ward.target_repo"] == "repo-completions-body"
+    assert attrs["ward.issue_ref"] == "issue-completions-body"
+
+
+def test_stream_chat_completion_ingests_metadata(monkeypatch):
+    spans = []
+    tracer = _Tracer(spans)
+    monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
+    monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
+
+    async def fake_dispatch_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+        assert trace_ctx is not None
+        attrs = trace_ctx.attrs()
+        assert attrs["agentproxy.request_id"] == "req-stream"
+        assert attrs["ward.run_id"] == "run-stream"
+        assert attrs["ward.target_repo"] == "repo-stream"
+        assert attrs["ward.issue_ref"] == "issue-stream"
+        assert attrs["ward.harness"] == "harness-stream"
+        assert attrs["agent.session_id"] == "session-stream"
+        yield {
+            "message": {"content": "Paris"},
+            "done": True,
+            "done_reason": "stop",
+        }
+
+    async def fake_catalog(_base_url):
+        return dict(CATALOG), True
+
+    monkeypatch.setattr(resilience, "dispatch_stream", fake_dispatch_stream)
+    monkeypatch.setattr(models, "_catalog", fake_catalog)
+    models.reset_catalog()
+    with TestClient(app) as c:
+        resp = c.post(
+            "/v1/chat/completions",
+            json={
+                "model": "qwen3:4b",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi"}],
+                "metadata": {
+                    "ward.run_id": "run-stream",
+                    "ward.target_repo": "repo-stream",
+                    "ward.issue_ref": "issue-stream",
+                    "ward.harness": "harness-stream",
+                    "agent.session_id": "session-stream",
+                },
+            },
+            headers={"x-request-id": "req-stream"},
+        )
+    assert resp.status_code == 200
+    assert "data:" in resp.text
+    assert _span_attrs(spans, "request.chat")["ward.run_id"] == "run-stream"
 
 
 def test_unknown_model_404(client):
