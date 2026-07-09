@@ -3,14 +3,9 @@
 # locally: pytest, ruff, black --check, mypy, plus the two daemonless boot/import
 # smoke scripts.
 #
-# Why raw `uv run` and not `ward <verb>`: the `docker` runner ships no flight-deck
-# tooling on PATH (it is a stock image, same as cli-guard's and infrastructure's
-# gates), so the ward binary is not available here. ward.yaml stays the local
-# source of truth - it maps these same commands (`ward test`, `ward smoke`,
-# `ward boot-probe`) - and CI invokes the underlying commands directly through
-# `astral-sh/setup-uv`, matching infrastructure/lint.yml's convention. uv
-# provisions its own Python from the `requires-python` floor, so no setup-python
-# step is needed.
+# The jobs run in the pinned aos dev-base image, which already ships uv, managed
+# Python, and ward. That lets CI skip `astral-sh/setup-uv` and invoke the repo's
+# ward verbs where they match the current commands.
 #
 # Deliberately NOT in this gate: test-container.sh (needs a Docker daemon) and the
 # tower-dependent scripts/truncation_proof.py + scripts/reliability_loop.py (need
@@ -34,15 +29,14 @@ permissions:
 jobs:
   quality:
     runs-on: docker
+    container:
+      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.195.0
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
       - name: Install dev dependencies
         run: uv sync --extra dev
       - name: Tests (ward test)
-        run: uv run pytest
+        run: ward exec test
       - name: Lint (ruff)
         run: uv run ruff check .
       - name: Format check (black)
@@ -52,12 +46,11 @@ jobs:
 
   smoke:
     runs-on: docker
+    container:
+      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.195.0
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
       - name: Daemonless boot probe (ward boot-probe)
-        run: ./boot_probe.sh
+        run: ward exec boot-probe
       - name: Import/build smoke (ward smoke)
-        run: ./test-fixes.sh
+        run: ward exec smoke
