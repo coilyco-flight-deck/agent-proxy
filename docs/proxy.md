@@ -132,6 +132,9 @@ secret is committed. Key knobs:
   degrade to no-ops when unset.
 * `PROXY_TRACE_BODIES` - opt-in request/response body capture for local OTLP
   backends. Defaults to off so exported spans and logs stay metadata-only.
+* `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
+  or a single `skill-usage.json` artifact. When set, the proxy ingests it at
+  startup and increments dashboard-friendly skill counts by skill and harness.
 
 ### Auto num_ctx from the model's real context window
 
@@ -217,7 +220,8 @@ JSON. The measured result and its reproduction command live in
 `llm_requests_total`, `llm_queue_depth`, `llm_queue_rejected_total`,
 `llm_retries_total`, `llm_fallbacks_total`, `llm_circuit_state`,
 `llm_truncation_avoided_total`, `llm_validation_failures_total`,
-`llm_context_truncated_total`, `llm_prompt_tokens`, `llm_upstream_latency_seconds`.
+`llm_context_truncated_total`, `llm_prompt_tokens`, `llm_upstream_latency_seconds`,
+`ward_skill_use_total`.
 
 ## Out of scope here
 

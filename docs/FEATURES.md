@@ -28,6 +28,10 @@ The locked scope. Each feature maps to an aosh leg `04-headless-proxy-build.md` 
 * **Reliability harness** - landed - `scripts/reliability_loop.py` (leg 05) scores a sustained, context-growing, tool-using loop against `direct` (tower `/v1`, no `num_ctx`) and `proxy` (same real tag, derived `num_ctx` injected), reusing the proxy's own `validate_response` plus a `missed_toolcall` rule. `--target both` runs the baseline and the after in one pass; `--json PATH` writes a durable, stable-schema, FQDN-free artifact so a before/after check re-runs the same command and diffs the JSON. The pure scoring, error-mapping, and aggregation paths are covered offline in `tests/test_reliability.py`. The M2 baseline-to-after number and its reproduction command live in `docs/reliability_baseline.md` (measurement pending a tower-reachable run). (agent-proxy#19, leg 04 step 8 / leg 05)
 * **2-replica topology behind Caddy** - planned - 2 self-contained replicas behind a Caddy hard-rule front selector keying on a path prefix or query-param override. The queue is per-pod and ephemeral by design. The deploy manifests are leg 09, not built here. (leg 02 topology)
 
+## Ward reap telemetry ingest
+
+* **Skill-use artifact ingest** - landed - `app/skill_use.py` reads a ward reap `skill-usage.json` artifact or an archive directory, normalizes stable run metadata, logs the rich run fields, and increments `ward_skill_use_total{skill,harness}` for dashboard graphs. Missing or empty artifacts are a clean no-op. (agent-proxy#39)
+
 ## Later phases - capability enhancement
 
 Planned capability work, sequenced in `docs/ROADMAP.md`. None is implemented until its phase opens, and each stays out of the phase-1 reliability scope.

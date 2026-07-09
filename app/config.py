@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     service_name: str = Field(default="agent-proxy")
     trace_bodies: bool = Field(default=False)
 
+    # Ward reap telemetry ingest. The path may point at a single
+    # ``skill-usage.json`` artifact or a directory of reaped run archives.
+    ward_skill_use_input: str = Field(default="")
+
     # Tower resolution. If PROXY_TOWER_BASE_URL is set it wins outright; else the
     # FQDN resolves from SSM at boot and the base URL is built from it.
     tower_base_url: str = Field(default="")

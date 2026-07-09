@@ -91,6 +91,7 @@ def test_metrics_text_exposes_leg04_names():
         b"llm_fallbacks_total",
         b"llm_circuit_state",
         b"llm_truncation_avoided_total",
+        b"ward_skill_use_total",
     ):
         assert name in text
 

@@ -26,6 +26,7 @@ from . import resilience, upstream
 from .analysis import apply_context_budget
 from .config import get_settings
 from .models import list_tags, resolve
+from .skill_use import ingest_skill_use_source
 from .obs import (
     RequestTraceContext,
     get_tracer,
@@ -58,6 +59,7 @@ _TRACE_METADATA_FIELDS: dict[str, tuple[str, ...]] = {
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Best-effort auto-instrumentation; degrades silently if the SDK is absent.
+    settings = get_settings()
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
@@ -72,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pass
 
     await get_queue().start()
+    ingest_skill_use_source(settings.ward_skill_use_input)
     # Tags are read live from the backend's /api/tags on first request, not at
     # boot - the tower need not be reachable for the proxy to start.
     log.info("startup.complete")

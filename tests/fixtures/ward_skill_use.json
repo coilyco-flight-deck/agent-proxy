@@ -1,0 +1,30 @@
+{
+  "run": {
+    "run_id": "engineer-codex-ward-873",
+    "container_name": "engineer-codex-ward-873",
+    "request_id": "req-ward-873",
+    "correlation_id": "req-ward-873",
+    "role": "codex",
+    "harness": "codex",
+    "repo": "coilyco-flight-deck/ward",
+    "issue_ref": "coilyco-flight-deck/ward#873",
+    "workflow": "direct-to-main",
+    "ward_version": "v0.522.0"
+  },
+  "skill_use": [
+    {
+      "skill": "repo-agent-proxy",
+      "harness": "codex",
+      "count": 2,
+      "first_seen": "2026-07-09T22:05:03Z",
+      "last_seen": "2026-07-09T22:05:55Z"
+    },
+    {
+      "skill": "tooling-ward-framing",
+      "harness": "codex",
+      "count": 1,
+      "first_seen": "2026-07-09T22:06:11Z",
+      "last_seen": "2026-07-09T22:06:11Z"
+    }
+  ]
+}

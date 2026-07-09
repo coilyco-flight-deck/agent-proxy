@@ -56,6 +56,11 @@ llm_context_truncated_total = Counter(
     "(the OLLAMA_NUM_PARALLEL division, issue #33)",
     ["logical_model", "backend"],
 )
+ward_skill_use_total = Counter(
+    "ward_skill_use_total",
+    "Ward skill-use counts observed from reap artifacts",
+    ["skill", "harness"],
+)
 llm_prompt_tokens = Histogram(
     "llm_prompt_tokens",
     "Prompt tokens forwarded upstream (post-guard)",
