@@ -5,7 +5,7 @@
 #
 # The jobs run in the pinned aos dev-base image, which already ships uv, managed
 # Python, and ward. That lets CI skip `astral-sh/setup-uv` and invoke the repo's
-# ward verbs where they match the current commands.
+# declared commands directly.
 #
 # Deliberately NOT in this gate: test-container.sh (needs a Docker daemon) and the
 # tower-dependent scripts/truncation_proof.py + scripts/reliability_loop.py (need
@@ -33,16 +33,14 @@ jobs:
       image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.195.0
     steps:
       - uses: actions/checkout@v4
-      - name: Install dev dependencies
-        run: uv sync --extra dev
       - name: Tests (ward test)
-        run: ward exec test
+        run: ./scripts/test.sh
       - name: Lint (ruff)
-        run: uv run ruff check .
+        run: .venv/bin/ruff check .
       - name: Format check (black)
-        run: uv run black --check .
+        run: .venv/bin/black --check .
       - name: Types (mypy)
-        run: uv run mypy app
+        run: .venv/bin/mypy app
 
   smoke:
     runs-on: docker
