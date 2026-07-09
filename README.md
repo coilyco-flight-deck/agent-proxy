@@ -35,8 +35,7 @@ the declared dev tooling off `pyproject.toml`. Run the same gate locally before
 landing so CI is green on arrival:
 
 ```bash
-uv sync --extra dev
-uv run pytest          # ward test
+ward exec test         # syncs dev deps and runs pytest
 uv run ruff check .
 uv run black --check .
 uv run mypy app

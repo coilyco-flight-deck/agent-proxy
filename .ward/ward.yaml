@@ -14,8 +14,8 @@
 
 commands:
   test:
-    run: uv run pytest
-    description: Run the unit test suite (tower not required).
+    run: ./scripts/test.sh
+    description: Sync dev deps and run the unit test suite (tower not required).
   serve:
     run: uv run uvicorn app.main:app --port 8080
     description: Serve the proxy on 127.0.0.1:8080.
