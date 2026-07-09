@@ -49,6 +49,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Daemonless boot probe (ward boot-probe)
-        run: ward exec boot-probe
+        run: ./boot_probe.sh
       - name: Import/build smoke (ward smoke)
-        run: ward exec smoke
+        run: ./test-fixes.sh
