@@ -30,7 +30,7 @@ jobs:
   quality:
     runs-on: docker
     container:
-      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.195.0
+      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.255.0
     steps:
       - uses: actions/checkout@v4
       - name: Tests (ward test)
@@ -105,7 +105,7 @@ jobs:
   smoke:
     runs-on: docker
     container:
-      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.195.0
+      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.255.0
     steps:
       - uses: actions/checkout@v4
       - name: Daemonless boot probe (ward boot-probe)
