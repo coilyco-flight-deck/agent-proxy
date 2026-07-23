@@ -29,6 +29,66 @@ def test_parse_skill_use_artifact_normalizes_fixture():
     assert first.ward_version == "v0.522.0"
 
 
+def test_parse_skill_use_artifact_supports_nested_metadata():
+    records = parse_skill_use_artifact(
+        {
+            "metadata": {
+                "run_id": "run-from-artifact",
+                "request_id": "request-from-artifact",
+                "repo": "coilyco-flight-deck/agent-proxy",
+                "workflow": "merge-remote-main",
+            },
+            "items": [
+                {
+                    "name": "nested-metadata-skill",
+                    "run": {
+                        "container_name": "worker-48",
+                        "role": "engineer",
+                        "harness": "codex",
+                        "ward_version": "v0.793.0",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.skill == "nested-metadata-skill"
+    assert record.run_id == "run-from-artifact"
+    assert record.request_id == "request-from-artifact"
+    assert record.repo == "coilyco-flight-deck/agent-proxy"
+    assert record.workflow == "merge-remote-main"
+    assert record.container_name == "worker-48"
+    assert record.role == "engineer"
+    assert record.harness == "codex"
+    assert record.ward_version == "v0.793.0"
+
+
+def test_parse_skill_use_artifact_ignores_malformed_values():
+    records = parse_skill_use_artifact(
+        {
+            "run": ["not", "metadata"],
+            "skill_use": [
+                {"skill": {"unexpected": "object"}, "count": {"unexpected": 2}},
+                {
+                    "skill": "safe-skill",
+                    "count": [3],
+                    "harness": {"unexpected": "object"},
+                    "metadata": ["not", "metadata"],
+                    "first_seen": None,
+                },
+            ],
+        }
+    )
+
+    assert len(records) == 1
+    assert records[0].skill == "safe-skill"
+    assert records[0].count == 1
+    assert records[0].harness == ""
+    assert records[0].first_seen == ""
+
+
 def test_ingest_skill_use_source_updates_metric(tmp_path):
     fixture = Path("tests/fixtures/ward_skill_use.json")
     target = tmp_path / "skill-usage.json"

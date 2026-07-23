@@ -5,13 +5,28 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TypeAlias, TypeGuard, TypedDict
 
 from .obs import InstrumentedAction, emit_instrumented_action, get_logger, ward_skill_use_total
 
 log = get_logger("agent-proxy.skill-use")
 
 _SOURCE_FILENAMES = ("skill-usage.json", "skill_use.json")
+
+JsonObject: TypeAlias = dict[str, object]
+
+
+class RunMetadata(TypedDict):
+    run_id: str
+    request_id: str
+    correlation_id: str
+    container_name: str
+    role: str
+    harness: str
+    repo: str
+    issue_ref: str
+    workflow: str
+    ward_version: str
 
 
 @dataclass(frozen=True)
@@ -53,34 +68,59 @@ class SkillUseRecord:
 
 def _first_text(*values: object) -> str:
     for value in values:
-        if value is None:
-            continue
         if isinstance(value, str):
             text = value.strip()
             if text:
                 return text
             continue
-        text = str(value).strip()
-        if text:
-            return text
+        if isinstance(value, (int, float, bool)):
+            text = str(value).strip()
+            if text:
+                return text
     return ""
 
 
 def _positive_int(value: object, default: int = 1) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value if value > 0 else default
+    if not isinstance(value, str):
+        return default
     try:
-        count = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+        count = int(value)
+    except ValueError:
         return default
     return count if count > 0 else default
 
 
-def _coerce_metadata(payload: object) -> dict[str, object]:
-    if not isinstance(payload, dict):
-        return {}
-    return payload
+def _is_json_object(payload: object) -> TypeGuard[JsonObject]:
+    """Accept only string-keyed JSON objects before accessing artifact fields."""
+    return isinstance(payload, dict) and all(isinstance(key, str) for key in payload)
 
 
-def _extract_run_metadata(payload: dict[str, object]) -> dict[str, str]:
+def _coerce_metadata(payload: object) -> JsonObject:
+    if _is_json_object(payload):
+        return payload
+    return {}
+
+
+def _empty_run_metadata() -> RunMetadata:
+    return {
+        "run_id": "",
+        "request_id": "",
+        "correlation_id": "",
+        "container_name": "",
+        "role": "",
+        "harness": "",
+        "repo": "",
+        "issue_ref": "",
+        "workflow": "",
+        "ward_version": "",
+    }
+
+
+def _extract_run_metadata(payload: JsonObject) -> RunMetadata:
     nested = _coerce_metadata(payload.get("run") or payload.get("metadata") or {})
     flat = payload
     return {
@@ -117,12 +157,12 @@ def _extract_run_metadata(payload: dict[str, object]) -> dict[str, str]:
     }
 
 
-def _skill_rows(payload: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+def _skill_rows(payload: object) -> tuple[list[JsonObject], RunMetadata]:
     if isinstance(payload, list):
-        rows = [row for row in payload if isinstance(row, dict)]
-        return rows, {}
-    if not isinstance(payload, dict):
-        return [], {}
+        rows = [row for row in payload if _is_json_object(row)]
+        return rows, _empty_run_metadata()
+    if not _is_json_object(payload):
+        return [], _empty_run_metadata()
 
     rows_obj = (
         payload.get("skill_use")
@@ -133,7 +173,7 @@ def _skill_rows(payload: object) -> tuple[list[dict[str, object]], dict[str, obj
         or []
     )
     if isinstance(rows_obj, list):
-        rows = [row for row in rows_obj if isinstance(row, dict)]
+        rows = [row for row in rows_obj if _is_json_object(row)]
     elif any(key in payload for key in ("skill", "skill_name", "name")):
         rows = [payload]
     else:
@@ -141,66 +181,67 @@ def _skill_rows(payload: object) -> tuple[list[dict[str, object]], dict[str, obj
     return rows, _extract_run_metadata(payload)
 
 
+def _merged_run_metadata(row: JsonObject, run_meta: RunMetadata) -> RunMetadata:
+    run_info = _coerce_metadata(row.get("run") or row.get("metadata") or {})
+    return {
+        "run_id": _first_text(
+            row.get("run_id"),
+            row.get("ward_run_id"),
+            run_info.get("run_id"),
+            run_info.get("ward_run_id"),
+            run_meta["run_id"],
+        ),
+        "request_id": _first_text(
+            row.get("request_id"),
+            run_info.get("request_id"),
+            run_meta["request_id"],
+        ),
+        "correlation_id": _first_text(
+            row.get("correlation_id"),
+            run_info.get("correlation_id"),
+            run_meta["correlation_id"],
+        ),
+        "container_name": _first_text(
+            row.get("container_name"),
+            row.get("ward_container_name"),
+            run_info.get("container_name"),
+            run_info.get("ward_container_name"),
+            run_meta["container_name"],
+        ),
+        "role": _first_text(row.get("role"), run_info.get("role"), run_meta["role"]),
+        "harness": _first_text(row.get("harness"), run_info.get("harness"), run_meta["harness"]),
+        "repo": _first_text(
+            row.get("repo"),
+            row.get("target_repo"),
+            run_info.get("repo"),
+            run_meta["repo"],
+        ),
+        "issue_ref": _first_text(
+            row.get("issue_ref"),
+            row.get("ward_issue_ref"),
+            run_info.get("issue_ref"),
+            run_info.get("ward_issue_ref"),
+            run_meta["issue_ref"],
+        ),
+        "workflow": _first_text(
+            row.get("workflow"), run_info.get("workflow"), run_meta["workflow"]
+        ),
+        "ward_version": _first_text(
+            row.get("ward_version"),
+            row.get("version"),
+            run_info.get("ward_version"),
+            run_info.get("version"),
+            run_meta["ward_version"],
+        ),
+    }
+
+
 def parse_skill_use_artifact(payload: object) -> list[SkillUseRecord]:
     """Normalize the ward reap summary artifact into dashboard-friendly records."""
     rows, run_meta = _skill_rows(payload)
     records: list[SkillUseRecord] = []
     for row in rows:
-        run_info = _coerce_metadata(row.get("run") or row.get("metadata") or {})
-        merged_meta = {
-            **run_meta,
-            "run_id": _first_text(
-                row.get("run_id"),
-                row.get("ward_run_id"),
-                run_info.get("run_id"),
-                run_info.get("ward_run_id"),
-                run_meta.get("run_id"),
-            ),
-            "request_id": _first_text(
-                row.get("request_id"),
-                run_info.get("request_id"),
-                run_meta.get("request_id"),
-            ),
-            "correlation_id": _first_text(
-                row.get("correlation_id"),
-                run_info.get("correlation_id"),
-                run_meta.get("correlation_id"),
-            ),
-            "container_name": _first_text(
-                row.get("container_name"),
-                row.get("ward_container_name"),
-                run_info.get("container_name"),
-                run_info.get("ward_container_name"),
-                run_meta.get("container_name"),
-            ),
-            "role": _first_text(row.get("role"), run_info.get("role"), run_meta.get("role")),
-            "harness": _first_text(
-                row.get("harness"), run_info.get("harness"), run_meta.get("harness")
-            ),
-            "repo": _first_text(
-                row.get("repo"),
-                row.get("target_repo"),
-                run_info.get("repo"),
-                run_meta.get("repo"),
-            ),
-            "issue_ref": _first_text(
-                row.get("issue_ref"),
-                row.get("ward_issue_ref"),
-                run_info.get("issue_ref"),
-                run_info.get("ward_issue_ref"),
-                run_meta.get("issue_ref"),
-            ),
-            "workflow": _first_text(
-                row.get("workflow"), run_info.get("workflow"), run_meta.get("workflow")
-            ),
-            "ward_version": _first_text(
-                row.get("ward_version"),
-                row.get("version"),
-                run_info.get("ward_version"),
-                run_info.get("version"),
-                run_meta.get("ward_version"),
-            ),
-        }
+        merged_meta = _merged_run_metadata(row, run_meta)
         skill = _first_text(row.get("skill"), row.get("skill_name"), row.get("name"))
         if not skill:
             continue
@@ -227,6 +268,12 @@ def parse_skill_use_artifact(payload: object) -> list[SkillUseRecord]:
     return records
 
 
+def _increment_skill_use_metric(record: SkillUseRecord) -> None:
+    ward_skill_use_total.labels(skill=record.skill, harness=record.harness or "unknown").inc(
+        record.count
+    )
+
+
 def record_skill_use(records: Iterable[SkillUseRecord]) -> int:
     total = 0
     for record in records:
@@ -234,9 +281,7 @@ def record_skill_use(records: Iterable[SkillUseRecord]) -> int:
         emit_instrumented_action(
             InstrumentedAction(
                 log_event="ward.skill_use.ingested",
-                metric=lambda record=record: ward_skill_use_total.labels(
-                    skill=record.skill, harness=record.harness or "unknown"
-                ).inc(record.count),
+                metric=lambda: _increment_skill_use_metric(record),
                 span_event="ward.skill_use.ingested",
                 fields=record.log_fields(),
             )
