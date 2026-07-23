@@ -1,31 +1,35 @@
 # Agent instructions - agent-proxy
 
-A capability platform in front of the local agent and LLM fleet, with the reliability proxy as phase 1. Read this, then read the build spec before writing code. Phase 1 stays tightly scoped to the reliability proxy. The broader capability phases live in `docs/ROADMAP.md` and are not implemented until their phase opens.
+Agent Proxy is the **observation, trajectory collection, and data-processing plane** for the agentic operations stack. LiteLLM is the commodity inference gateway beneath that plane. The current reliability proxy is a valuable first collection tap and remains in service until LiteLLM parity is proven.
 
-## Build spec lives in aosh
+## Read first
 
-Do not invent the design here. The locked design and the step-by-step headless build leg live in `coilyco-bridge/agentic-os-hardware` under `docs/plan/`:
+- [`README.md`](README.md) explains the current product charter and what is implemented today.
+- [`docs/architecture-v2.md`](docs/architecture-v2.md) defines ownership boundaries and the migration inventory.
+- [`docs/trajectory-contract-v1.md`](docs/trajectory-contract-v1.md) is the producer and consumer contract for trajectory events.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/work-graph.md`](docs/work-graph.md) define the dependency-ordered implementation work.
+- `coilyco-bridge/agentic-os-hardware#36` is the canonical companion architecture decision. Keep this repository aligned with it.
 
-- `02-reference-architecture.md` - the locked architecture (components, topology, resilience semantics).
-- `04-headless-proxy-build.md` - the self-contained build steps for this repo.
-- `01-reference-diagnosis.md` - why this exists, with the measurements.
+The aosh build documents remain evidence for the delivered reliability behavior. They are not a prohibition on the v2 work in this repository.
 
-Tracking issue: coilysiren/inbox#118.
+## Ownership boundaries
 
-## Shape
+- LiteLLM owns provider integration, routing, retries, fallbacks, keys, budgets, and inference cost accounting after parity is accepted.
+- Agent Proxy owns identity, policy, correlation, context safety, cheap structural detection, event emission, ingestion, durable raw retention, replay, trajectory assembly, evaluation joins, and dataset materialization.
+- Ward owns authorization, execution, lifecycle, recovery, and governance. Agent Proxy must not become an execution authority.
+- SigNoz and OTLP are operational evidence surfaces. They are not the sole durable trajectory store.
+- Keep expensive processing, materialization, evaluation, and export work off the latency-sensitive model request path.
 
-- Python. FastAPI / Starlette async, httpx, uvicorn. The proxy is I/O-bound, so Python is correct. Rust plus a Python sidecar is a documented fallback only if a profiler shows a real CPU bottleneck.
-- OpenAI-compatible surface so every harness points at it unchanged.
-- In-memory bounded `asyncio.Queue` plus worker pool is the resilience core.
-- 2 replicas. The queue is per-pod and ephemeral by design.
+## Current implementation guardrail
 
-## Conventions
+- Do not delete or weaken the current reliability behavior until issue #41 demonstrates LiteLLM parity.
+- Do not claim an architecture-v2 component is landed until code and verification land. Keep `docs/FEATURES.md` current.
+- Current skill-use ingestion emits structured logs and a Prometheus counter. It does not durably retain trajectories yet.
 
-- Route dev commands through ward once a `.ward/ward.yaml` exists.
+## Shape and conventions
+
+- Python, FastAPI or Starlette async, httpx, and uvicorn or Hypercorn remain appropriate for the I/O-bound Agent Proxy surface.
+- Preserve the OpenAI-compatible surface while LiteLLM parity is evaluated.
 - Opaque ids, tokens, and tailnet FQDNs go in AWS SSM, never in tracked files. Resolve at runtime. The tower FQDN is `/coilysiren/kai-tower-3026/tailnet-fqdn`.
-- She/her for Kai in every artifact. No em-dashes, no semicolons in prose, bold for anchors, flat bullets over prose tables.
-- Keep `docs/FEATURES.md` current as features land (the README / AGENTS / FEATURES trifecta).
-
-## Status
-
-Seeded, not yet implemented. The first implementer follows the aosh headless proxy-build leg.
+- She/her for Kai in every artifact. No em dashes or semicolons in prose. Use bold anchors and flat bullets over prose tables.
+- Route development commands through ward when `.ward/ward.yaml` is available.

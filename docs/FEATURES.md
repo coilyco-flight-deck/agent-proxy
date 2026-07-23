@@ -1,54 +1,35 @@
 # Features
 
-The living feature inventory for `agent-proxy`, grouped by phase. Phase 1 - the locked reliability proxy - is built and runs locally, with the core `num_ctx` fix proven end to end against the live tower. The later phases are planned capability work and are not implemented until their phase opens (see `docs/ROADMAP.md`).
+This is the living inventory of shipped behavior. Agent Proxy is transitioning from a reliability proxy into the observation, trajectory collection, and data-processing plane. Planned architecture-v2 work is kept separate so this document never presents it as landed.
 
-Status legend used below: **planned** means specified but not built, **building** means in progress, **landed** means implemented and verified.
+Status legend:
 
-## Phase 1 - reliability proxy
+- **landed** means implemented and verified in this repository.
+- **planned** means accepted work that is not implemented here.
 
-The locked scope. Each feature maps to an aosh leg `04-headless-proxy-build.md` build step or a leg `02-reference-architecture.md` component.
+## Landed reliability collection tap
 
-* **Skeleton + observability** - landed - the `app/` tree with obs wired before any logic: structlog JSON, prometheus `/metrics`, OpenTelemetry tracer, Sentry init from config, and `/healthz` returning 200. (leg 04 step 1, leg 02 observability component)
-* **Request-path tracing and structured logs** - landed - the inbound request path now opens root spans for `/v1/chat/completions` and `/v1/completions`, nests queue/upstream/resilience child spans, and emits per-attempt plus terminal structlog events. `PROXY_TRACE_BODIES` keeps payload capture opt-in. (agent-proxy#28)
-* **Ward correlation metadata** - landed - ward run metadata from `x-request-id`, `x-ward-*`, and `x-agent-session-id` headers, with OpenAI `metadata` as fallback, now flows into `RequestTraceContext.extra`, structured logs, and root plus child spans so SigNoz can join proxy traces with ward-run logs. Prometheus labels stay low-cardinality. (agent-proxy#38)
-* **Pass-through tags + auto num_ctx** - landed - harnesses pass the real ollama tag (e.g. `qwen3:4b`) as `model`; `app/models.py` resolves it against the backend catalog, reads the tag's real `context_length` from `/api/tags` (cached), and derives `num_ctx = min(context_length, PROXY_NUM_CTX_CEILING) - PROXY_NUM_CTX_HEADROOM`. This retired the hand-maintained logical-model alias table (`fast-think` / `fast` / `ctx-think` / `ctx` / `tune`) that drifted from what was actually pulled. A fallback chain beyond the built-in tower comes from `PROXY_BACKENDS_JSON` / `PROXY_BACKENDS_FILE`. Superseded design track: `coilyco-bridge/agentic-os-hardware#25`. (issue #32)
-* **num_ctx injection** - landed - the httpx client (`app/upstream.py`) forwards to the backend's native ollama `/api/chat` with the derived `options.num_ctx` injected, and the caller can never override it - upstream forces the safe value even if a client sends its own. Proven end to end against the live tower: a 55k-token request keeps ~48k `prompt_eval_count`, not 32767 (`scripts/truncation_proof.py`) - that number holds on a backend running `OLLAMA_NUM_PARALLEL=1`; a backend serving more parallel slots divides the window (see **Effective-context verification** below). The highest-value fix. (leg 04 step 2, leg 02 num_ctx injection, issue #32)
-* **Effective-context verification + NUM_PARALLEL compensation** - landed - the injected `num_ctx` is a request for context, so the proxy treats *delivered* context as the contract. ollama loads `num_ctx` as the model's total window and divides it across `OLLAMA_NUM_PARALLEL` slots, so a >1-slot backend silently halves (or worse) the window - the exact silent-truncation failure the proxy exists to kill, pushed one layer down. Two loci: (1) **compensate** - the client injects `derived_num_ctx * num_parallel` (`PROXY_OLLAMA_NUM_PARALLEL`, or a per-backend `num_parallel` in `PROXY_BACKENDS_JSON`) so each slot still delivers the intended per-request window; (2) **fail loud** - after every ollama call, `app/analysis.detect_context_truncation` compares `prompt_eval_count` against both the sent prompt size and the target window, and when the backend delivered materially less it marks the result (`finish_reason=length`, never a silent short read), increments `llm_context_truncated_total`, and logs `dispatch.context_truncated` through the shared instrumentation wrapper. `PROXY_FAIL_ON_CONTEXT_TRUNCATION` turns the mark into a hard 502. The deployment half - pinning `OLLAMA_NUM_PARALLEL=1` on the backends - lives in infrastructure/ansible, not here. (issue #33, ties into #32, #18, #19, #37)
-* **In-memory queue + worker pool** - landed - a bounded `asyncio.Queue` and worker pool (`app/queue.py`) as the resilience core. The route enqueues and awaits a future, a worker dispatches, backpressure returns 429 when full, and `llm_queue_depth` is exported. (leg 04 step 3, leg 02 in-memory queue)
-* **Response validation** - landed - reject empty completions, malformed tool-call JSON, and degenerate repetition before returning; a legitimately short word answer ("OK") is never rerolled. (leg 04 step 4, leg 02 resilience policies)
-* **Self-verification guard** - landed - a lightweight semantic check rejects assistant claims that it already did an action when there is no tool evidence behind the claim, so a router can kick the turn back instead of trusting a hallucinated "done". (issue #4)
-* **Retry with backoff** - landed - a capricious single bad generation or a transport error becomes an exponential-backoff reroll on the same live backend (up to `max_retries`), not a user-visible failure. Increments `llm_retries_total`. (leg 04 step 4, step 10)
-* **Fallback chain** - landed - on exhausting a backend's retries, advance to the next backend in the resolved model's chain, and surface a clean `AllBackendsFailed` once the chain is spent. Increments `llm_fallbacks_total`. The default ships the tower primary; siblings/CPU/API entries are added via `PROXY_BACKENDS_JSON`. `resilience.dispatch_resilient(model_name, messages)` is the tag-based entry the callers use. (leg 04 step 4, step 10, leg 02 backends, issue #32)
-* **Per-backend circuit breaker** - landed - a breaker with cooldown and a half-open probe stops the proxy hammering a dead backend and protects tail latency. Tracks `llm_circuit_state`. (leg 04 step 4)
-* **Context-budget guard** - landed - count prompt tokens (`app/analysis.py`), and when a request exceeds the model's safe `num_ctx`, trim oldest non-system turns before forward while always keeping the system framing and the live turn. The trim path now emits a structured prompt-trim log, increments `llm_truncation_avoided_total`, and adds a span event with the token counts and drop count when tracing is active. (leg 04 step 5, leg 02 language analysis, issue #37)
-* **OpenAI-compatible surface** - landed - `/v1/chat/completions` (streaming and non-streaming), `/v1/completions`, and `/v1/models` listing the tags actually present on the backend (live `/api/tags`), shaped to the OpenAI schema. Reasoning-model thought is surfaced as `reasoning_content`. (leg 04 step 6, leg 02 web server, issue #32)
-* **SSM-sourced config** - landed - `app/config.py` reads from env (prefix `PROXY_`) with a best-effort SSM fallback; the tower FQDN, Sentry DSN, and any API-fallback key resolve at boot. No secret in a tracked file. (leg 04 secrets and config)
-* **Container boot validation** - landed - two repeatable checks prove the image boots and serves, not just that it builds. `ward test-container` (`./test-container.sh`) builds the image, runs it, and asserts `/healthz` + `/v1/models` + `/metrics` respond and the container stays up (needs a Docker daemon). `ward boot-probe` (`./boot_probe.sh`) validates the same `uv sync --frozen --no-dev` + `python -m app.main` boot path with no daemon, for a ward feature container or daemonless CI. Both share `scripts/probe_endpoints.sh`. (agent-proxy#24, follows the agent-proxy#22 dependency fix)
-* **CI quality gate** - landed - `.forgejo/workflows/ci.yml` gates every push and PR on the declared dev tooling off `pyproject.toml`: `pytest`, `ruff check`, `black --check`, and `mypy app`, plus the two daemonless smoke scripts (`boot_probe.sh`, `test-fixes.sh` - the latter exposed as `ward smoke`). The jobs run in the pinned aos dev-base image, which already ships uv, managed Python, and ward, so CI can invoke `ward exec test`, `ward exec boot-probe`, and `ward exec smoke` without `astral-sh/setup-uv`; `ward exec test` syncs the dev extras itself before it runs `pytest`. The Docker-daemon (`test-container.sh`) and tower-dependent (`scripts/truncation_proof.py`, `scripts/reliability_loop.py`) checks are deliberately excluded so the gate stays green on a daemonless, tower-less runner. `[tool.black]`/`[tool.ruff]`/`[tool.mypy]` in `pyproject.toml` are the single source of truth the gate reads. (agent-proxy#31, #34)
-* **Reliability harness** - landed - `scripts/reliability_loop.py` (leg 05) scores a sustained, context-growing, tool-using loop against `direct` (tower `/v1`, no `num_ctx`) and `proxy` (same real tag, derived `num_ctx` injected), reusing the proxy's own `validate_response` plus a `missed_toolcall` rule. `--target both` runs the baseline and the after in one pass; `--json PATH` writes a durable, stable-schema, FQDN-free artifact so a before/after check re-runs the same command and diffs the JSON. The pure scoring, error-mapping, and aggregation paths are covered offline in `tests/test_reliability.py`. The M2 baseline-to-after number and its reproduction command live in `docs/reliability_baseline.md` (measurement pending a tower-reachable run). (agent-proxy#19, leg 04 step 8 / leg 05)
-* **2-replica topology behind Caddy** - planned - 2 self-contained replicas behind a Caddy hard-rule front selector keying on a path prefix or query-param override. The queue is per-pod and ephemeral by design. The deploy manifests are leg 09, not built here. (leg 02 topology)
+- **OpenAI-compatible request surface** - landed - `/v1/chat/completions`, `/v1/completions`, and `/v1/models`, including streaming and normalized reasoning content.
+- **Real-tag context safety** - landed - backend catalog discovery, safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
+- **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.
+- **Operational evidence** - landed - structured JSON logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, request spans, and opt-in trace-body capture.
+- **Ward correlation** - landed - request, Ward run, workflow, repository, issue, and agent-session metadata joins in logs and spans.
+- **Skill-use artifact observation** - landed - ward reap `skill-usage.json` parsing, normalization, structured event logging, and the `ward_skill_use_total` Prometheus counter. This is not durable trajectory retention.
+- **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
 
-## Ward reap telemetry ingest
+## Planned architecture v2
 
-* **Skill-use artifact ingest** - landed - `app/skill_use.py` reads a ward reap `skill-usage.json` artifact or an archive directory, normalizes stable run metadata, logs the rich run fields, and increments `ward_skill_use_total{skill,harness}` for dashboard graphs. Missing or empty artifacts are a clean no-op. (agent-proxy#39)
+- **LiteLLM commodity gateway integration** - planned - provider integration, routing, retries, fallbacks, keys, budgets, and cost accounting move behind a parity-proven LiteLLM boundary. See [#41](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41).
+- **Versioned trajectory contract and schema package** - planned - durable producer and consumer validation for `trajectory-contract-v1.md`. See [#42](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/42).
+- **Durable append-only raw ingestion and replay** - planned - the existing event signals become replayable retained evidence. See [#43](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/43).
+- **Episode and trajectory materialization** - planned - assemble raw correlated events, including partial and late records. See [#44](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/44).
+- **Evaluation and annotation joins** - planned - evaluator, verifier, and human intervention records. See [#45](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/45).
+- **Versioned dataset exports** - planned - SFT, preference, verifier, reward, and held-out-evaluation datasets with provenance. See [#46](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/46).
+- **Operational and governance views** - planned - controlled operational queries, Ward dossier inputs, and harness-fit comparisons. See [#47](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/47).
 
-## Later phases - capability enhancement
+## References
 
-Planned capability work, sequenced in `docs/ROADMAP.md`. None is implemented until its phase opens, and each stays out of the phase-1 reliability scope.
-
-* **Model upskilling** - planned (future) - improve weak model behavior, particularly tool use. Relates to the aosh `tune` wildcard fine-tune (leg 12).
-* **Tool injection** - planned (future) - inject tools like web search and API calls into harness requests.
-* **Credential injection** - planned (future) - scoped credentials via MCP pass-through, so harnesses get credentials without holding them.
-* **Knowledge management / RAG** - planned (future) - retrieval-augmented knowledge for requests.
-* **Data formatting / data management / persistence** - planned (future) - conventional capability enhancement with durable state.
-* **Single-shot to multi-turn** - planned (future) - turn a single-shot capability into a multi-turn one.
-* **i/o validation + formatting** - planned (future) - validate and shape request and response i/o, extending the phase-1 resilience validation.
-
-## Walkthrough
-
-The phase-1 request path, module map, configuration, and how to run and prove the
-proxy locally are in [`docs/proxy.md`](proxy.md).
-
-## Source of truth
-
-The design is locked in aosh and is not duplicated here. See `docs/plan/02-reference-architecture.md` and `docs/plan/04-headless-proxy-build.md` in `coilyco-bridge/agentic-os-hardware`, and the tracking issue `coilysiren/inbox#118`.
+- [`architecture-v2.md`](architecture-v2.md) states ownership boundaries and the migration inventory.
+- [`trajectory-contract-v1.md`](trajectory-contract-v1.md) specifies the event contract.
+- [`ROADMAP.md`](ROADMAP.md) and [`work-graph.md`](work-graph.md) define execution order.
+- [`proxy.md`](proxy.md) remains the detailed guide to the currently landed reliability behavior.
