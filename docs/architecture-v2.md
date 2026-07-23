@@ -1,0 +1,141 @@
+# Agent Proxy architecture v2
+
+## Charter
+
+Agent Proxy is the **observation, trajectory collection, and data-processing plane** for the agentic operations stack. LiteLLM supplies the commodity inference gateway beneath it. The current reliability proxy is retained as the first collection tap until LiteLLM parity is proven.
+
+This document defines the target ownership boundary. It does not claim that the v2 cold path, a durable store, or LiteLLM integration has landed. The implementation sequence is in [`work-graph.md`](work-graph.md).
+
+## Ownership boundary
+
+### LiteLLM
+
+LiteLLM is the provider-facing commodity layer. After the parity decision, it owns:
+
+- Provider protocol adapters and provider credentials.
+- Model routing and provider selection.
+- Retries, fallbacks, and provider-level failure behavior.
+- Gateway key management and authorization for inference access.
+- Budgets, spend limits, and inference cost accounting.
+- Gateway-level usage and provider observability.
+
+Agent Proxy does not fork this commodity behavior unless the parity decision identifies a documented Agent Proxy-specific gap.
+
+### Agent Proxy hot path
+
+The hot path is latency-sensitive. It owns only work that must happen before, during, or immediately after an inference request:
+
+- Resolve caller and workload identity.
+- Enforce Agent Proxy policy that is not commodity provider routing.
+- Capture correlation with trace, span, Ward run, episode, agent session, request, repository, issue, and workflow identities.
+- Apply context-safety controls and cheap structural detectors.
+- Normalize small operational facts such as outcome, tokens, latency, retry, fallback, and finish information.
+- Emit bounded events asynchronously with explicit failure handling.
+
+The hot path never synchronously waits for trajectory materialization, evaluation, training export, bulk body processing, or expensive ML analysis.
+
+### Agent Proxy cold path
+
+The cold path turns emitted evidence into a governed dataset builder:
+
+- Validate and ingest versioned events.
+- Normalize records while preserving their raw envelopes.
+- Durably retain append-only raw evidence for replay.
+- Assemble episodes and trajectories from correlated events.
+- Join automated evaluations, verifier results, annotations, and human intervention.
+- Materialize versioned datasets and held-out evaluation sets with provenance.
+- Serve controlled operational queries and harness-fit comparisons.
+
+Cold-path components may run asynchronously, in workers, or in a separate data service. Their exact deployment and durable storage technology are deliberately deferred to the implementation work.
+
+### Ward
+
+Ward remains the authority for:
+
+- Authorization.
+- Execution.
+- Lifecycle management.
+- Recovery.
+- Governance.
+
+Agent Proxy may receive Ward lifecycle and execution evidence, supply controlled dossier inputs, and correlate data with Ward runs. It must not approve actions, execute work, or become a second authority.
+
+### Operational evidence surfaces
+
+OTLP and SigNoz receive logs, metrics, and traces for live operational visibility. They can be joined with trajectory records by trace and correlation identifiers. They are not the only durable trajectory store, replay source, or dataset provenance system.
+
+## Data and request flow
+
+1. A harness invokes the OpenAI-compatible model surface and supplies available Ward correlation metadata.
+2. Agent Proxy performs identity, policy, correlation, context safety, and cheap structural checks.
+3. The commodity gateway sends inference work to the selected provider. The current in-repository gateway remains in this role until issue #41 proves LiteLLM parity.
+4. Agent Proxy returns the normalized model result and emits a small versioned operational event without waiting for cold-path processing.
+5. The cold path validates, durably retains, and replays raw events as needed.
+6. Materializers assemble episodes and trajectories. Evaluators and annotation systems join evidence to those records.
+7. Dataset exporters and operational views consume versioned, access-controlled derived records with their provenance.
+
+## Evaluation plane
+
+Evaluators consume:
+
+- Materialized trajectories and their raw evidence references.
+- Expected outcome, policy decision, execution observation, and state-change references where available.
+- Model, provider, token, latency, cost, retry, fallback, and finish facts.
+- Human annotations and intervention records with author role, rubric or verifier version, and confidence.
+
+Evaluators produce:
+
+- A versioned score, label, or verifier result.
+- Explanation or evidence references, not mandatory copied content.
+- Evaluator identity, implementation or rubric version, timestamp, confidence, and supersession links.
+- Dataset eligibility decisions that remain reproducible from retained inputs.
+
+Evaluation is evidence collection and analysis. It does not authorize or execute an action.
+
+## Content privacy and governance
+
+- **Metadata tier** retains correlation, operational measurements, identifiers, hashes, policy outcomes, and references. It is the default event capture tier.
+- **Redacted content tier** retains content only after configured redaction. Access is limited to approved operational and dataset-building roles.
+- **Restricted body tier** permits original request or response bodies only through explicit opt-in capture, a declared retention policy, and the narrowest access tier.
+- Event envelopes record `redaction.status`, `redaction.policy_version`, `capture.body`, and content references so consumers do not assume body availability.
+- Raw retention has a documented retention class and access tier. Derived datasets retain source ids, hashes, transform versions, and their applicable redaction policy.
+- Deletion, legal hold, retention expiry, and access-audit implementation details are future work. Producers must make these controls enforceable by avoiding implicit body copies.
+
+## Migration inventory
+
+### `app/models.py` - migrate onto LiteLLM
+
+The backend catalog, backend-chain construction, provider dialect selection, and logical routing are commodity gateway concerns that move to LiteLLM after #41 parity. The Agent Proxy-specific safe-context policy and correlation labels remain, but should no longer require this module to own provider routing.
+
+### `app/upstream.py` - migrate onto LiteLLM
+
+Native Ollama and OpenAI request shaping, response normalization, health probing, and provider transport are gateway concerns. Retire this module after parity once the LiteLLM integration exposes the facts Agent Proxy needs for its event envelope and context-safety behavior.
+
+### `app/queue.py` - retire after parity
+
+The bounded in-memory queue and worker pool currently protect this repository's gateway dispatch. Re-evaluate it after #41. Retire it if LiteLLM provides the accepted admission and overload behavior. It must not be reused as durable trajectory storage. Any future event buffer requires durable ingestion semantics rather than this ephemeral per-pod queue.
+
+### `app/resilience.py` - migrate commodity behavior, retain Agent Proxy-specific detectors
+
+Retry, fallback, backend circuit-breaking, and provider dispatch migrate onto LiteLLM after parity. Response validation, delivered-context verification, self-verification checks, and policy-oriented structural detectors are Agent Proxy-specific behavior and remain on the hot path where justified.
+
+### `app/analysis.py` - retain as Agent Proxy-specific behavior
+
+Context budgeting, token estimation used for safety policy, context-truncation detection, and cheap structural checks belong to Agent Proxy. Keep their decisions observable through the trajectory contract. Avoid expanding this module into heavyweight model evaluation on the request path.
+
+### `app/obs.py` - retain unchanged, then extend
+
+Structured logs, Prometheus metrics, OpenTelemetry setup, and correlation propagation remain operational evidence. Extend their emission to produce contract-v1 events without making logs, Prometheus, OTLP, or SigNoz the durable trajectory source of truth.
+
+### `app/skill_use.py` - move off the hot path
+
+Ward reap artifact parsing is already asynchronous to model serving. Keep normalization, but move its result into append-only contract-v1 ingestion and durable raw retention. Logging and `ward_skill_use_total` remain useful operational projections, not the persistence mechanism.
+
+## Transition invariants
+
+- No current reliability behavior is deleted before the LiteLLM parity spike is accepted.
+- LiteLLM does not absorb Agent Proxy identity, policy, correlation, context safety, or trajectory responsibilities.
+- Agent Proxy does not absorb Ward authorization or execution authority.
+- Heavy processing stays off the request path.
+- SigNoz and OTLP never become the sole durable trajectory store.
+- Historical issues are evidence only. New v2 implementation work uses the fresh issue graph.
