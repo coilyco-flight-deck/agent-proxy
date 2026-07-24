@@ -21,11 +21,12 @@ Status legend:
 - **Evaluation and annotation records** - landed - automatic evaluations, verifiers, human annotations, and interventions join to stable trajectories with immutable evidence, supersession, disagreement, late-arrival, replay, redaction, and access-tier semantics.
 - **Versioned dataset exports** - landed - SFT, preference, verifier, reward, and held-out evaluation schemas produce write-once manifests with source provenance, content hashes, deterministic trajectory-level splits, reproducibility, and opt-in restricted body references.
 - **Operational and governance views** - landed - internal reliability, cost and latency, policy, evaluation, and harness-fit query contracts join durable trajectories to OTLP context, enforce access tiers, publish freshness and reconstruction limits, and provide evidence-only Ward dossier inputs.
+- **LiteLLM parity decision and runner** - landed - a machine-readable comparison selects standalone LiteLLM, while an executable endpoint probe gates model discovery, chat shape, streaming, finish reasons, usage, and error mapping. Runtime integration and live parity remain planned.
 - **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
 
 ## Planned architecture v2
 
-- **LiteLLM commodity gateway integration** - planned - provider integration, routing, retries, fallbacks, keys, budgets, and cost accounting move behind a parity-proven LiteLLM boundary. See [#41](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41).
+- **LiteLLM commodity gateway integration** - planned - the selected standalone gateway still needs live tower, key, budget, spend, context-safety, and trace parity before provider integration, routing, retries, fallbacks, and cost accounting move behind it.
 ## References
 
 - [`architecture-v2.md`](architecture-v2.md) states ownership boundaries and the migration inventory.
@@ -36,5 +37,6 @@ Status legend:
 - [`evaluation-records.md`](evaluation-records.md) documents evaluation, annotation, and intervention evidence.
 - [`dataset-exports.md`](dataset-exports.md) documents schemas, manifests, split safety, and reproducibility.
 - [`operational-views.md`](operational-views.md) documents queries, dossiers, access, freshness, and backfill.
+- [`litellm-parity.md`](litellm-parity.md) documents the standalone decision and cutover gates.
 - [`ROADMAP.md`](ROADMAP.md) and [`work-graph.md`](work-graph.md) define execution order.
 - [`proxy.md`](proxy.md) remains the detailed guide to the currently landed reliability behavior.

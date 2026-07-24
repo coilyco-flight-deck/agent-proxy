@@ -15,8 +15,8 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
 ## Implementation sequence
 
 1. [#41 LiteLLM standalone versus SDK parity spike](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41)
-   - Select the LiteLLM integration boundary only after provider, routing, retry, fallback, key, budget, cost, streaming, and observability parity is evidenced.
-   - Current reliability behavior stays until that proof is accepted.
+   - Landed: selects the standalone LiteLLM Proxy and adds an executable surface parity runner.
+   - Current reliability behavior stays until the documented live tower, key, budget, spend, context-safety, and trace gates pass.
 2. [#42 Trajectory schema package and validation fixtures](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/42)
    - Establish the shared contract independently of the chosen retention system.
 3. [#43 Append-only ingestion and replayable raw retention](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/43)

@@ -4,7 +4,7 @@ The issues below are fresh implementation work for Agent Proxy architecture v2. 
 
 1. [#41 LiteLLM standalone versus SDK parity spike](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41)
    - No dependency.
-   - Proves the selected commodity gateway integration before current behavior is removed.
+   - Landed: selects standalone LiteLLM and supplies executable gates that must pass before current behavior is removed.
 2. [#42 Trajectory schema package and validation fixtures](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/42)
    - No dependency.
    - Implements the shared contract in [`trajectory-contract-v1.md`](trajectory-contract-v1.md).

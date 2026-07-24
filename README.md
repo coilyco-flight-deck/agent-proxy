@@ -2,7 +2,7 @@
 
 Agent Proxy is the **observation, trajectory collection, and data-processing plane** for the agentic operations stack. It protects the model request path with Agent Proxy-specific policy and safety behavior while turning operational work into trustworthy trajectory evidence. LiteLLM is the intended commodity inference gateway underneath it.
 
-The repository is in transition. The existing OpenAI-compatible reliability proxy is implemented and remains the first collection tap. LiteLLM is **not yet a runtime dependency**. Its standalone versus SDK integration and parity plan is tracked in [#41](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41). No current reliability behavior is removed until that work proves replacement behavior.
+The repository is in transition. The existing OpenAI-compatible reliability proxy is implemented and remains the first collection tap. LiteLLM is **not yet a runtime dependency**. The [parity decision](docs/litellm-parity.md) selects a standalone LiteLLM Proxy as the inner gateway, with live tower, key, budget, spend, and trace gates still blocking cutover. No current reliability behavior is removed until those gates prove replacement behavior.
 
 ## Stack ownership
 
@@ -28,6 +28,7 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - Immutable evaluation, verifier, human annotation, and intervention records with supersession, disagreement, late-arrival, privacy, and replay semantics.
 - Reproducible SFT, preference, verifier, reward, and held-out evaluation exports with write-once manifests and trajectory-level leakage prevention.
 - Governed reliability, cost and latency, policy, evaluation, and harness-fit views with OTLP joins, freshness metadata, and evidence-only Ward dossier inputs.
+- A machine-readable standalone-versus-SDK LiteLLM decision and executable endpoint parity runner. LiteLLM runtime integration has not landed.
 
 `docs/FEATURES.md` is the complete current inventory. Planned v2 components are deliberately marked planned there.
 
@@ -82,5 +83,6 @@ The proxy uses port 8080 by default. Set `PROXY_HOST`, `PROXY_PORT`, or `LOG_LEV
 - [`docs/evaluation-records.md`](docs/evaluation-records.md) defines evaluator, annotation, supersession, and disagreement evidence.
 - [`docs/dataset-exports.md`](docs/dataset-exports.md) defines export schemas, manifests, splits, reproducibility, and privacy.
 - [`docs/operational-views.md`](docs/operational-views.md) defines query contracts, Ward dossier boundaries, access, and freshness.
+- [`docs/litellm-parity.md`](docs/litellm-parity.md) records the standalone decision, capability matrix, runner, and cutover blockers.
 - [`docs/work-graph.md`](docs/work-graph.md) links the new dependency-ordered implementation issues.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) explains sequencing without treating future capabilities as prohibited work.

@@ -37,6 +37,9 @@ commands:
   schema:
     run: uv run python scripts/export_trajectory_schema.py
     description: Regenerate the committed trajectory contract JSON Schema.
+  litellm-parity:
+    run: uv run python scripts/litellm_parity.py
+    description: Compare the current Agent Proxy surface with a standalone LiteLLM candidate.
 
   # Container acceptance tests (agent-proxy#24). test-container builds the image
   # and asserts it boots + serves /healthz + /v1/models + /metrics (needs a

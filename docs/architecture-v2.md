@@ -34,6 +34,10 @@ The hot path is latency-sensitive. It owns only work that must happen before, du
 
 The hot path never synchronously waits for trajectory materialization, evaluation, training export, bulk body processing, or expensive ML analysis.
 
+The commodity gateway integration is a standalone LiteLLM Proxy, not an
+embedded SDK. [`litellm-parity.md`](litellm-parity.md) records the decision and
+the live gates that must pass before the current gateway behavior can retire.
+
 ### Agent Proxy cold path
 
 The cold path turns emitted evidence into a governed dataset builder:
