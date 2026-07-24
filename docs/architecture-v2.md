@@ -129,7 +129,10 @@ Context budgeting, token estimation used for safety policy, context-truncation d
 
 ### `app/obs.py` - retain unchanged, then extend
 
-Structured logs, Prometheus metrics, OpenTelemetry setup, and correlation propagation remain operational evidence. Extend their emission to produce contract-v1 events without making logs, Prometheus, OTLP, or SigNoz the durable trajectory source of truth.
+Structured logs, Prometheus metrics, OpenTelemetry setup, and correlation
+propagation remain operational evidence. The opt-in request tap now offers
+metadata-only lifecycle events to bounded contract-v1 ingestion without making
+logs, Prometheus, OTLP, or SigNoz the durable trajectory source of truth.
 
 ### `app/skill_use.py` - move off the hot path
 

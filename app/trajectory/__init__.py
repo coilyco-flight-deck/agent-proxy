@@ -53,6 +53,7 @@ from app.trajectory.guard import (
     ingest_guard_data,
     specgen_policy_snapshot,
 )
+from app.trajectory.request_events import RequestLifecycle
 
 __all__ = [
     "CURRENT_SCHEMA_NAME",
@@ -89,6 +90,7 @@ __all__ = [
     "events_from_cli_guard_audit",
     "ingest_guard_data",
     "specgen_policy_snapshot",
+    "RequestLifecycle",
     "canonical_event_bytes",
     "event_json_schema",
     "validate_event",

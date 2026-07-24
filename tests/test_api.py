@@ -1,6 +1,8 @@
 """OpenAI-compatible surface (leg 04 steps 1 and 6). Upstream is stubbed so
 these run without the tower."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -135,6 +137,45 @@ def test_chat_completion_emits_request_lifecycle_logs(client, monkeypatch):
         (event, fields["outcome"]) for event, fields in events
     ]
     assert ("request.completed", "ok") in [(event, fields["outcome"]) for event, fields in events]
+
+
+def test_chat_completion_offers_metadata_trajectory_events(client, monkeypatch):
+    class CapturingEmitter:
+        dropped = 0
+
+        def __init__(self):
+            self.payloads = []
+
+        def emit_nowait(self, payload):
+            self.payloads.append(payload)
+            return True
+
+        async def stop(self):
+            return None
+
+    emitter = CapturingEmitter()
+    monkeypatch.setattr("app.main._trajectory_emitter", emitter)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "messages": [{"role": "user", "content": "private prompt"}],
+        },
+        headers={
+            "x-request-id": "fixture-request",
+            "x-ward-run-id": "fixture-run",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [payload["event_type"] for payload in emitter.payloads] == [
+        "action.proposed",
+        "execution.completed",
+    ]
+    retained = json.dumps(emitter.payloads, sort_keys=True)
+    assert "private prompt" not in retained
+    assert emitter.payloads[-1]["correlation"]["ward_run_id"] == "fixture-run"
 
 
 def test_chat_completion_uses_tracing(monkeypatch):

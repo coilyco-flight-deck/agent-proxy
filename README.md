@@ -25,6 +25,8 @@ Heavy data processing stays out of the latency-sensitive model request path. The
   observations and preserves structured-log and Prometheus projections.
 - An executable trajectory contract v1 package with producer and consumer validation, compatibility fixtures, and a JSON Schema for non-Python consumers.
 - Append-only SQLite trajectory ingestion with idempotent receipts, quarantine, replay, and a bounded asynchronous hot-path emitter.
+- Opt-in request lifecycle emission that offers metadata-only action and terminal
+  execution evidence to the bounded queue without waiting on storage.
 - Deterministic cold-path episode and trajectory reconstruction with explicit partial and late status, source-event provenance, content hashes, and append-only revisions.
 - Immutable evaluation, verifier, human annotation, and intervention records with supersession, disagreement, late-arrival, privacy, and replay semantics.
 - Reproducible SFT, preference, verifier, reward, and held-out evaluation exports with write-once manifests and trajectory-level leakage prevention.

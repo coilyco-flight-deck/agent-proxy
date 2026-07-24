@@ -24,4 +24,15 @@ The issues below are fresh implementation work for Agent Proxy architecture v2. 
    - Depends on #43, #44, and #45.
    - Landed: produces governed evidence views while keeping Ward as the authority.
 
-Each issue contains its own explicit acceptance criteria. #41 and #42 can proceed in parallel. #43 follows the schema package, and the remaining data-plane work follows the listed dependencies.
+Every dependency-ordered issue above has landed.
+
+## Producer and request-path follow-through
+
+- [#51](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/51) maps agent-compose bundle evidence.
+- [#52](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/52) maps cli-guard audit and specgen policy evidence.
+- [#54](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/54) durably retains Ward skill-use observations.
+- [#55](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/55) offers request lifecycle evidence to the bounded emitter.
+
+These slices are independently verified and keep Ward as the execution
+authority. Live deployment, access, and cutover gates remain coordinated
+follow-through rather than speculative changes to the current gateway.

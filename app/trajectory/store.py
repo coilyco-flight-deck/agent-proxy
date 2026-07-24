@@ -14,7 +14,10 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from app.obs import get_logger
 from app.trajectory.schema import TrajectoryEvent, canonical_event_bytes, validate_event
+
+log = get_logger("agent-proxy.trajectory.store")
 
 IngestOutcome = Literal["accepted", "duplicate", "quarantined"]
 
@@ -468,6 +471,8 @@ class AsyncTrajectoryEmitter:
         self._queue: asyncio.Queue[Any | None] = asyncio.Queue(maxsize=maxsize)
         self._worker: asyncio.Task[None] | None = None
         self.dropped = 0
+        self.failed = 0
+        self.last_error_class = ""
 
     async def start(self) -> None:
         if self._worker is None:
@@ -498,6 +503,15 @@ class AsyncTrajectoryEmitter:
             try:
                 if payload is None:
                     return
-                await self.store.ingest_async(payload)
+                try:
+                    await self.store.ingest_async(payload)
+                except Exception as exc:
+                    self.failed += 1
+                    self.last_error_class = type(exc).__name__
+                    log.warning(
+                        "trajectory.event.persist_failed",
+                        error_class=self.last_error_class,
+                        failed=self.failed,
+                    )
             finally:
                 self._queue.task_done()

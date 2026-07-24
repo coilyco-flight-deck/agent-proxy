@@ -16,6 +16,7 @@ import json
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
@@ -41,7 +42,9 @@ from .obs import (
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed, ContextTruncated
 from .trajectory.api import router as trajectory_router
-from .trajectory.store import TrajectoryStore
+from .trajectory.request_events import RequestLifecycle, RequestOutcome
+from .trajectory.schema import TrajectoryEvent
+from .trajectory.store import AsyncTrajectoryEmitter, TrajectoryStore
 
 # obs is wired at import (app.obs runs setup_observability at module load).
 
@@ -59,9 +62,12 @@ _TRACE_METADATA_FIELDS: dict[str, tuple[str, ...]] = {
     "agent.session_id": ("x-agent-session-id", "agent.session_id"),
 }
 
+_trajectory_emitter: AsyncTrajectoryEmitter | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    global _trajectory_emitter
     # Best-effort auto-instrumentation; degrades silently if the SDK is absent.
     settings = get_settings()
     try:
@@ -77,10 +83,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         pass
 
+    trajectory_store = TrajectoryStore(settings.trajectory_db_path)
+    if settings.trajectory_request_emission_enabled:
+        _trajectory_emitter = AsyncTrajectoryEmitter(
+            trajectory_store,
+            maxsize=settings.trajectory_ingest_queue_size,
+        )
+        await _trajectory_emitter.start()
     await get_queue().start()
     ingest_skill_use_source(
         settings.ward_skill_use_input,
-        TrajectoryStore(settings.trajectory_db_path),
+        trajectory_store,
     )
     # Tags are read live from the backend's /api/tags on first request, not at
     # boot - the tower need not be reachable for the proxy to start.
@@ -89,6 +102,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await get_queue().stop()
+        if _trajectory_emitter is not None:
+            await _trajectory_emitter.stop()
+            _trajectory_emitter = None
         await upstream.aclose()
 
 
@@ -231,6 +247,38 @@ def _trace_context(
     )
 
 
+def _emit_trajectory_event(event: TrajectoryEvent) -> bool:
+    """Offer one event to the bounded queue without delaying request handling."""
+
+    if _trajectory_emitter is None:
+        return False
+    accepted = _trajectory_emitter.emit_nowait(event.model_dump(mode="json", exclude_none=True))
+    if not accepted:
+        log.warning(
+            "trajectory.event.dropped",
+            event_type=event.event_type,
+            dropped=_trajectory_emitter.dropped,
+        )
+    return accepted
+
+
+def _emit_request_terminal(
+    lifecycle: RequestLifecycle,
+    outcome: RequestOutcome,
+    *,
+    started: float,
+    result: upstream.UpstreamResult | None = None,
+) -> None:
+    latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+    _emit_trajectory_event(
+        lifecycle.execution_event(
+            outcome,
+            result=result,
+            latency_ms=latency_ms,
+        )
+    )
+
+
 # --------------------------------------------------------------------------- #
 # OpenAI surface
 # --------------------------------------------------------------------------- #
@@ -258,6 +306,8 @@ async def _stream_chat(
     *,
     trace_ctx: RequestTraceContext,
     request_span: Any | None,
+    lifecycle: RequestLifecycle,
+    started: float,
 ) -> StreamingResponse:
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -329,6 +379,11 @@ async def _stream_chat(
             **trace_ctx.attrs(),
             outcome=outcome,
         )
+        _emit_request_terminal(
+            lifecycle,
+            "succeeded" if outcome == "ok" else "stream_failed",
+            started=started,
+        )
         final = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
         yield f"data: {json.dumps(final)}\n\n"
         yield "data: [DONE]\n\n"
@@ -371,8 +426,10 @@ async def chat_completions(request: Request) -> Response:
             else None
         ),
     )
-    request_id = request.headers.get("x-request-id", "") or str(
-        trace_extra.get("agentproxy.request_id", "")
+    request_id = (
+        request.headers.get("x-request-id", "")
+        or str(trace_extra.get("agentproxy.request_id", ""))
+        or str(uuid.uuid4())
     )
     trace_ctx = _trace_context(
         model.name,
@@ -383,6 +440,12 @@ async def chat_completions(request: Request) -> Response:
     )
     tracer = get_tracer()
     request_span = get_current_trace_span()
+    lifecycle = RequestLifecycle.from_trace_context(
+        trace_ctx,
+        occurred_at=datetime.now(timezone.utc),
+    )
+    started = time.perf_counter()
+    _emit_trajectory_event(lifecycle.action_event())
 
     if stream:
         llm_requests_total.labels(logical_model=model.name, outcome="stream").inc()
@@ -394,6 +457,8 @@ async def chat_completions(request: Request) -> Response:
             model.name,
             trace_ctx=trace_ctx,
             request_span=request_span,
+            lifecycle=lifecycle,
+            started=started,
         )
 
     try:
@@ -415,6 +480,7 @@ async def chat_completions(request: Request) -> Response:
                     "response.finish_reasons", [result.done_reason] if result.done_reason else []
                 )
     except QueueBusy:
+        _emit_request_terminal(lifecycle, "queue_rejected", started=started)
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log_on_span(
             request_span,
@@ -425,6 +491,7 @@ async def chat_completions(request: Request) -> Response:
         )
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
     except ContextTruncated as exc:
+        _emit_request_terminal(lifecycle, "context_truncated", started=started)
         # Opt-in hard fail (issue #33): the backend cut the context below the ask.
         llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
         log_on_span(
@@ -437,6 +504,7 @@ async def chat_completions(request: Request) -> Response:
         )
         return _error(502, str(exc), "context_truncated")
     except AllBackendsFailed as exc:
+        _emit_request_terminal(lifecycle, "upstream_failed", started=started)
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
         log_on_span(
             request_span,
@@ -449,6 +517,7 @@ async def chat_completions(request: Request) -> Response:
         return _error(502, str(exc), "upstream_error")
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+    _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
     log_on_span(
         request_span,
         "request.completed",
@@ -492,8 +561,10 @@ async def completions(request: Request) -> Response:
             else None
         ),
     )
-    request_id = request.headers.get("x-request-id", "") or str(
-        trace_extra.get("agentproxy.request_id", "")
+    request_id = (
+        request.headers.get("x-request-id", "")
+        or str(trace_extra.get("agentproxy.request_id", ""))
+        or str(uuid.uuid4())
     )
     trace_ctx = _trace_context(
         model.name,
@@ -504,6 +575,12 @@ async def completions(request: Request) -> Response:
     )
     tracer = get_tracer()
     request_span = get_current_trace_span()
+    lifecycle = RequestLifecycle.from_trace_context(
+        trace_ctx,
+        occurred_at=datetime.now(timezone.utc),
+    )
+    started = time.perf_counter()
+    _emit_trajectory_event(lifecycle.action_event())
 
     try:
         if tracer is None:
@@ -524,6 +601,7 @@ async def completions(request: Request) -> Response:
                     "response.finish_reasons", [result.done_reason] if result.done_reason else []
                 )
     except QueueBusy:
+        _emit_request_terminal(lifecycle, "queue_rejected", started=started)
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log_on_span(
             request_span,
@@ -534,6 +612,7 @@ async def completions(request: Request) -> Response:
         )
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
     except ContextTruncated as exc:
+        _emit_request_terminal(lifecycle, "context_truncated", started=started)
         # Opt-in hard fail (issue #33): the backend cut the context below the ask.
         llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
         log_on_span(
@@ -546,6 +625,7 @@ async def completions(request: Request) -> Response:
         )
         return _error(502, str(exc), "context_truncated")
     except AllBackendsFailed as exc:
+        _emit_request_terminal(lifecycle, "upstream_failed", started=started)
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
         log_on_span(
             request_span,
@@ -558,6 +638,7 @@ async def completions(request: Request) -> Response:
         return _error(502, str(exc), "upstream_error")
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+    _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
     log_on_span(
         request_span,
         "request.completed",

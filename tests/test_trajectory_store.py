@@ -113,3 +113,26 @@ async def test_async_emitter_is_bounded_and_flushes_to_durable_store(tmp_path):
     await emitter.stop()
 
     assert len(tuple(store.iter_events())) == 1
+
+
+async def test_async_emitter_survives_one_persistence_failure():
+    class FlakyStore:
+        def __init__(self):
+            self.calls = 0
+
+        async def ingest_async(self, _payload):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("fixture persistence failure")
+
+    store = FlakyStore()
+    emitter = AsyncTrajectoryEmitter(store, maxsize=2)
+    await emitter.start()
+
+    assert emitter.emit_nowait({"event": 1})
+    assert emitter.emit_nowait({"event": 2})
+    await emitter.stop()
+
+    assert store.calls == 2
+    assert emitter.failed == 1
+    assert emitter.last_error_class == "OSError"

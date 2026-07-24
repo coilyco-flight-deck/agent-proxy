@@ -142,6 +142,10 @@ secret is committed. Key knobs:
   or a single `skill-usage.json` artifact. When set, the proxy ingests it at
   startup, durably retains metadata-only trajectory observations, and increments
   dashboard-friendly skill counts by skill and harness.
+* `PROXY_TRAJECTORY_REQUEST_EMISSION_ENABLED` - offers metadata-only request
+  action and terminal execution events to the bounded trajectory queue. It
+  defaults off until `PROXY_TRAJECTORY_DB_PATH` points at durable mounted
+  storage.
 
 ### Auto num_ctx from the model's real context window
 

@@ -39,6 +39,13 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
    - Depends on #43, #44, and #45.
    - Landed: exposes governed operational evidence, OTLP joins, harness-fit comparisons, and evidence-only dossier inputs without moving authority out of Ward.
 
+## Producer follow-through
+
+- [#51 Agent-compose evidence](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/51) - landed - maps immutable manifests and public-safe selection traces without copying context bodies.
+- [#52 Guard evidence](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/52) - landed - maps cli-guard audit rows and specgen policy snapshots without retaining sensitive arguments, diagnostics, paths, or hosts.
+- [#54 Ward skill-use evidence](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/54) - landed - persists normalized reap artifacts while preserving log and metric projections.
+- [#55 Request lifecycle evidence](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/55) - landed - adds opt-in bounded action and terminal execution emission without storage waits or body capture.
+
 ## Delivery rules
 
 - Keep expensive ingestion, materialization, evaluation, and export processing off the model request path.
