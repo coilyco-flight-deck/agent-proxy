@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, TypeAlias, TypeGuard, TypedDict
 
 from .obs import InstrumentedAction, emit_instrumented_action, get_logger, ward_skill_use_total
+from .trajectory.producer import ProducerContext
+from .trajectory.schema import TrajectoryEvent
+from .trajectory.store import TrajectoryStore
 
 log = get_logger("agent-proxy.skill-use")
 
@@ -274,9 +279,101 @@ def _increment_skill_use_metric(record: SkillUseRecord) -> None:
     )
 
 
-def record_skill_use(records: Iterable[SkillUseRecord]) -> int:
-    total = 0
+def _record_time(record: SkillUseRecord, observed_at: datetime) -> datetime:
+    for value in (record.last_seen, record.first_seen):
+        if not value:
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            continue
+        return parsed.astimezone(timezone.utc)
+    return observed_at.astimezone(timezone.utc)
+
+
+def skill_use_trajectory_events(
+    records: Iterable[SkillUseRecord],
+    *,
+    observed_at: datetime | None = None,
+) -> tuple[TrajectoryEvent, ...]:
+    """Map normalized Ward skill evidence to metadata-only trajectory events."""
+
+    seen_at = observed_at or datetime.now(timezone.utc)
+    events: list[TrajectoryEvent] = []
     for record in records:
+        fields = record.log_fields()
+        record_digest = hashlib.sha256(
+            json.dumps(fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        occurred_at = _record_time(record, seen_at)
+        source_ref = f"ward:skill-usage:{record.run_id or record_digest}"
+        correlation = {
+            key: value
+            for key, value in {
+                "ward_run_id": record.run_id,
+                "request_id": record.request_id,
+                "repository": record.repo,
+                "issue_ref": record.issue_ref,
+                "workflow": record.workflow,
+                "correlation_id": record.correlation_id,
+            }.items()
+            if value
+        }
+        context = ProducerContext(
+            source_name="ward.skill-use",
+            source_version=record.ward_version or "unknown",
+            source_instance_id="skill-use-adapter",
+            actor_type="agent",
+            actor_id="ward:skill-use-producer",
+            actor_role=record.role or record.harness or "agent",
+            correlation=correlation,
+        )
+        events.append(
+            context.event(
+                event_type="observation.recorded",
+                occurred_at=occurred_at,
+                idempotency_key=f"{source_ref}:{record.skill}:{record_digest}",
+                attributes={
+                    "ward.harness": record.harness,
+                    "ward.skill": record.skill,
+                    "ward.skill.count": record.count,
+                    "ward.skill.first_seen": record.first_seen,
+                    "ward.skill.last_seen": record.last_seen,
+                },
+                payload={
+                    "observation_kind": "ward.skill-use",
+                    "observation_ref": f"{source_ref}:skill:{record.skill}:{record_digest}",
+                    "subject_ref": f"skill:{record.skill}",
+                    "measured_facts": {
+                        "count": record.count,
+                        "harness": record.harness,
+                    },
+                    "retention_class": "trajectory",
+                    "access_tier": "internal",
+                },
+                input_refs=[source_ref],
+                transform="ward.skill-use-adapter",
+                transform_version="1",
+                content_sha256=record_digest,
+            )
+        )
+    return tuple(events)
+
+
+def record_skill_use(
+    records: Iterable[SkillUseRecord],
+    *,
+    trajectory_store: TrajectoryStore | None = None,
+    observed_at: datetime | None = None,
+) -> int:
+    normalized = tuple(records)
+    if trajectory_store is not None:
+        for event in skill_use_trajectory_events(normalized, observed_at=observed_at):
+            trajectory_store.ingest(event.model_dump(mode="json", exclude_none=True))
+    total = 0
+    for record in normalized:
         total += 1
         emit_instrumented_action(
             InstrumentedAction(
@@ -289,11 +386,20 @@ def record_skill_use(records: Iterable[SkillUseRecord]) -> int:
     return total
 
 
-def ingest_skill_use_payload(payload: object) -> int:
+def ingest_skill_use_payload(
+    payload: object,
+    *,
+    trajectory_store: TrajectoryStore | None = None,
+    observed_at: datetime | None = None,
+) -> int:
     records = parse_skill_use_artifact(payload)
     if not records:
         return 0
-    return record_skill_use(records)
+    return record_skill_use(
+        records,
+        trajectory_store=trajectory_store,
+        observed_at=observed_at,
+    )
 
 
 def _read_json_file(path: Path) -> object | None:
@@ -309,7 +415,10 @@ def _read_json_file(path: Path) -> object | None:
         return None
 
 
-def ingest_skill_use_source(source: str | Path | None) -> int:
+def ingest_skill_use_source(
+    source: str | Path | None,
+    trajectory_store: TrajectoryStore | None = None,
+) -> int:
     """Read a skill-use artifact file or archive directory and record summaries."""
     if not source:
         return 0
@@ -329,10 +438,18 @@ def ingest_skill_use_source(source: str | Path | None) -> int:
             payload = _read_json_file(child)
             if payload is None:
                 continue
-            total += ingest_skill_use_payload(payload)
+            total += ingest_skill_use_payload(
+                payload,
+                trajectory_store=trajectory_store,
+                observed_at=datetime.fromtimestamp(child.stat().st_mtime, tz=timezone.utc),
+            )
         return total
 
     payload = _read_json_file(path)
     if payload is None:
         return 0
-    return ingest_skill_use_payload(payload)
+    return ingest_skill_use_payload(
+        payload,
+        trajectory_store=trajectory_store,
+        observed_at=datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc),
+    )

@@ -140,7 +140,8 @@ secret is committed. Key knobs:
   backends. Defaults to off so exported spans and logs stay metadata-only.
 * `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
   or a single `skill-usage.json` artifact. When set, the proxy ingests it at
-  startup and increments dashboard-friendly skill counts by skill and harness.
+  startup, durably retains metadata-only trajectory observations, and increments
+  dashboard-friendly skill counts by skill and harness.
 
 ### Auto num_ctx from the model's real context window
 

@@ -7,10 +7,14 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
 ## Current baseline
 
 - The current service is an OpenAI-compatible reliability gateway with real-tag context protection, queueing, validation, retries, fallbacks, circuit breaking, and operational telemetry.
-- It is stateless except for its in-memory queue and caches.
+- The request path remains stateless except for its in-memory queue and caches.
 - Ward correlation metadata reaches logs and traces.
-- Skill-use artifact ingestion normalizes and emits records to logs and Prometheus. It does not yet persist raw events or assemble trajectories.
-- SigNoz and OTLP support operations today. Durable trajectory retention has not landed.
+- Skill-use artifact ingestion durably retains contract-v1 observations and
+  keeps logs and Prometheus as operational projections.
+- Append-only SQLite retention, replay, materialization, evaluation joins,
+  dataset exports, and governed views have landed in the cold path.
+- SigNoz and OTLP support operations without becoming the trajectory system of
+  record.
 
 ## Implementation sequence
 
@@ -18,7 +22,7 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
    - Landed: selects the standalone LiteLLM Proxy and adds an executable surface parity runner.
    - Current reliability behavior stays until the documented live tower, key, budget, spend, context-safety, and trace gates pass.
 2. [#42 Trajectory schema package and validation fixtures](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/42)
-   - Establish the shared contract independently of the chosen retention system.
+   - Landed: establishes the shared executable contract independently of the retention system.
 3. [#43 Append-only ingestion and replayable raw retention](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/43)
    - Depends on #42.
    - Landed: SQLite WAL retention, immutable receipt and quarantine ledgers, replay, and a bounded asynchronous emitter provide durable evidence outside the hot path.

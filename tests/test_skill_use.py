@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 
 from app.obs import ward_skill_use_total
-from app.skill_use import ingest_skill_use_source, parse_skill_use_artifact
+from app.skill_use import (
+    ingest_skill_use_source,
+    parse_skill_use_artifact,
+    skill_use_trajectory_events,
+)
+from app.trajectory.store import TrajectoryStore
 
 
 def test_parse_skill_use_artifact_normalizes_fixture():
@@ -124,3 +129,38 @@ def test_ingest_skill_use_source_walks_archive_directories(tmp_path):
 
     assert ingested == 2
     assert after - before == 1
+
+
+def test_skill_use_records_become_metadata_only_trajectory_events():
+    payload = Path("tests/fixtures/ward_skill_use.json").read_text(encoding="utf-8")
+    events = skill_use_trajectory_events(parse_skill_use_artifact(json.loads(payload)))
+
+    assert len(events) == 2
+    first = events[0]
+    assert first.event_type == "observation.recorded"
+    assert first.payload.observation_kind == "ward.skill-use"
+    assert first.payload.subject_ref == "skill:repo-agent-proxy"
+    assert first.payload.measured_facts == {"count": 2, "harness": "codex"}
+    assert first.correlation.ward_run_id == "engineer-codex-ward-873"
+    assert first.correlation.repository == "coilyco-flight-deck/ward"
+    assert first.attributes["ward.harness"] == "codex"
+    assert first.content.capture == "metadata_only"
+    assert first.actor.id == "ward:skill-use-producer"
+
+
+def test_skill_use_source_is_idempotent_in_trajectory_store(tmp_path):
+    fixture = Path("tests/fixtures/ward_skill_use.json")
+    target = tmp_path / "skill-usage.json"
+    target.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+    store = TrajectoryStore(tmp_path / "trajectory.sqlite3")
+
+    assert ingest_skill_use_source(target, store) == 2
+    assert ingest_skill_use_source(target, store) == 2
+
+    assert len(tuple(store.iter_events())) == 2
+    assert store.receipt_outcomes() == (
+        "accepted",
+        "accepted",
+        "duplicate",
+        "duplicate",
+    )

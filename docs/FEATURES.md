@@ -14,8 +14,11 @@ Status legend:
 - **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.
 - **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, request spans, and opt-in trace-body capture.
 - **Ward correlation** - landed - request, Ward run, workflow, repository, issue, and agent-session metadata joins in logs and spans.
-- **Skill-use artifact observation** - landed - ward reap `skill-usage.json` parsing, normalization, structured event logging, and the `ward_skill_use_total` Prometheus counter. This is not durable trajectory retention.
-- **Versioned trajectory schema package** - landed - Pydantic producer and consumer validation, stable canonical serialization, compatibility fixtures, and a committed JSON Schema implement contract v1. This does not yet provide durable ingestion.
+- **Skill-use artifact observation** - landed - Ward reap `skill-usage.json`
+  parsing durably retains metadata-only skill observations with run and
+  engineering correlations while preserving structured logs and the
+  `ward_skill_use_total` Prometheus counter.
+- **Versioned trajectory schema package** - landed - Pydantic producer and consumer validation, stable canonical serialization, compatibility fixtures, and a committed JSON Schema implement contract v1. Durable intake is the separate landed retention capability below.
 - **Append-only trajectory retention** - landed - an internal cold-path API validates and idempotently commits raw contract-v1 envelopes to SQLite, retains duplicate and quarantine receipts, blocks mutation with database triggers, and replays into fresh consumers. A bounded emitter keeps storage waits off the model hot path.
 - **Episode and trajectory materialization** - landed - deterministic connected-component assembly preserves every correlation dimension, orders events, exposes partial and late state, records retries, fallbacks, and human interventions, and appends content-hashed derived revisions.
 - **Evaluation and annotation records** - landed - automatic evaluations, verifiers, human annotations, and interventions join to stable trajectories with immutable evidence, supersession, disagreement, late-arrival, replay, redaction, and access-tier semantics.

@@ -21,7 +21,8 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - A bounded in-memory worker queue, response validation, retry, fallback, and per-backend circuit breaking.
 - Context-budget protection and a small self-verification detector for unsupported action claims.
 - Structured logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, Ward correlation metadata, and health endpoints.
-- Ward skill-use artifact parsing that emits structured events and Prometheus counts. It does not persist raw trajectory records.
+- Ward skill-use artifact parsing that durably retains metadata-only trajectory
+  observations and preserves structured-log and Prometheus projections.
 - An executable trajectory contract v1 package with producer and consumer validation, compatibility fixtures, and a JSON Schema for non-Python consumers.
 - Append-only SQLite trajectory ingestion with idempotent receipts, quarantine, replay, and a bounded asynchronous hot-path emitter.
 - Deterministic cold-path episode and trajectory reconstruction with explicit partial and late status, source-event provenance, content hashes, and append-only revisions.

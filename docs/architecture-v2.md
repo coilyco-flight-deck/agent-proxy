@@ -133,7 +133,10 @@ Structured logs, Prometheus metrics, OpenTelemetry setup, and correlation propag
 
 ### `app/skill_use.py` - move off the hot path
 
-Ward reap artifact parsing is already asynchronous to model serving. Keep normalization, but move its result into append-only contract-v1 ingestion and durable raw retention. Logging and `ward_skill_use_total` remain useful operational projections, not the persistence mechanism.
+Ward reap artifact parsing is asynchronous to model serving. Its normalized
+records now enter append-only contract-v1 retention as metadata-only
+observations. Logging and `ward_skill_use_total` remain useful operational
+projections, not the persistence mechanism.
 
 ## Transition invariants
 

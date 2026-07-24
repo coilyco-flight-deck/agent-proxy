@@ -41,6 +41,7 @@ from .obs import (
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed, ContextTruncated
 from .trajectory.api import router as trajectory_router
+from .trajectory.store import TrajectoryStore
 
 # obs is wired at import (app.obs runs setup_observability at module load).
 
@@ -77,7 +78,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pass
 
     await get_queue().start()
-    ingest_skill_use_source(settings.ward_skill_use_input)
+    ingest_skill_use_source(
+        settings.ward_skill_use_input,
+        TrajectoryStore(settings.trajectory_db_path),
+    )
     # Tags are read live from the backend's /api/tags on first request, not at
     # boot - the tower need not be reachable for the proxy to start.
     log.info("startup.complete")
