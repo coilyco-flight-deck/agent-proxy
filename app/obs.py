@@ -227,9 +227,18 @@ def _current_span():
     return span
 
 
-def get_current_recording_span():
-    """Return the active recording span so callers can preserve its context."""
-    return _current_span()
+def get_current_trace_span():
+    """Return the active span when it carries a valid correlation context."""
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        span_context = span.get_span_context()
+    except Exception:
+        return None
+    if not span_context.is_valid:
+        return None
+    return span
 
 
 def log_on_span(
@@ -244,6 +253,14 @@ def log_on_span(
     if span is None:
         logger(event, **fields)
         return
+
+    try:
+        span_context = span.get_span_context()
+        if span_context.is_valid:
+            fields["trace_id"] = f"{span_context.trace_id:032x}"
+            fields["span_id"] = f"{span_context.span_id:016x}"
+    except Exception:
+        pass
 
     try:
         from opentelemetry import trace

@@ -29,7 +29,7 @@ from .models import list_tags, resolve
 from .skill_use import ingest_skill_use_source
 from .obs import (
     RequestTraceContext,
-    get_current_recording_span,
+    get_current_trace_span,
     get_tracer,
     is_trace_bodies_enabled,
     llm_prompt_tokens,
@@ -374,7 +374,7 @@ async def chat_completions(request: Request) -> Response:
         extra=trace_extra,
     )
     tracer = get_tracer()
-    root_span = get_current_recording_span()
+    root_span = get_current_trace_span()
 
     if stream:
         llm_requests_total.labels(logical_model=model.name, outcome="stream").inc()
@@ -494,7 +494,7 @@ async def completions(request: Request) -> Response:
         extra=trace_extra,
     )
     tracer = get_tracer()
-    root_span = get_current_recording_span()
+    root_span = get_current_trace_span()
 
     try:
         if tracer is None:

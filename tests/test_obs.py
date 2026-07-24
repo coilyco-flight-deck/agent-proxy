@@ -9,6 +9,7 @@ from app.obs import (
     _add_trace_context,
     _otlp_http_traces_url,
     emit_instrumented_action,
+    get_current_trace_span,
     get_logger,
     init_sentry,
     log_on_span,
@@ -108,6 +109,23 @@ def test_log_on_span_activates_requested_trace_context(capsys):
     assert payload["event"] == "root.completed"
     assert payload["trace_id"] == "00000000000000000000000000000123"
     assert payload["span_id"] == "0000000000000456"
+
+
+def test_get_current_trace_span_accepts_valid_nonrecording_span():
+    from opentelemetry import trace
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+    span = NonRecordingSpan(
+        SpanContext(
+            trace_id=0x123,
+            span_id=0x456,
+            is_remote=False,
+            trace_flags=TraceFlags(0x01),
+        )
+    )
+
+    with trace.use_span(span, end_on_exit=False):
+        assert get_current_trace_span() is span
 
 
 def test_emit_instrumented_action_hits_log_metric_and_span(monkeypatch, capsys):
