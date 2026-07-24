@@ -139,11 +139,16 @@ def test_chat_completion_emits_request_lifecycle_logs(client, monkeypatch):
 
 def test_chat_completion_uses_tracing(monkeypatch):
     spans = []
+    terminal_logs = []
     tracer = _Tracer(spans)
     monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
     monkeypatch.setattr("app.queue.get_tracer", lambda: tracer)
     monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
     monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
+    monkeypatch.setattr(
+        "app.main.log_on_span",
+        lambda span, event, *args, **fields: terminal_logs.append((span.name, event)),
+    )
 
     async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
         return UpstreamResult(
@@ -166,6 +171,7 @@ def test_chat_completion_uses_tracing(monkeypatch):
         )
     assert resp.status_code == 200
     assert any(name == "request.chat" for name, _ in spans)
+    assert ("request.chat", "request.completed") in terminal_logs
 
 
 def test_chat_completion_ingests_ward_headers(monkeypatch):

@@ -37,3 +37,39 @@ async def test_worker_delivers_result(monkeypatch):
         assert result.content == "hello"
     finally:
         await q.stop()
+
+
+async def test_worker_restores_submitter_trace_context(monkeypatch):
+    from opentelemetry import trace
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+    from app import resilience
+    from app.upstream import UpstreamResult
+
+    observed = []
+
+    async def fake_dispatch(model, messages, tools=None, options=None, trace_ctx=None):
+        observed.append(trace.get_current_span().get_span_context())
+        return UpstreamResult(model="t", content="hello")
+
+    monkeypatch.setattr(resilience, "dispatch", fake_dispatch)
+    monkeypatch.setattr("app.queue.get_tracer", lambda: None)
+    parent = NonRecordingSpan(
+        SpanContext(
+            trace_id=0x123,
+            span_id=0x456,
+            is_remote=False,
+            trace_flags=TraceFlags(0x01),
+        )
+    )
+    q = WorkQueue(maxsize=4, worker_count=1)
+    await q.start()
+    try:
+        with trace.use_span(parent, end_on_exit=False):
+            await asyncio.wait_for(q.submit(_model(), [], None, None), timeout=5)
+    finally:
+        await q.stop()
+
+    assert len(observed) == 1
+    assert observed[0].trace_id == 0x123
+    assert observed[0].span_id == 0x456

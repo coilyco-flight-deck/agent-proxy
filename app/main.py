@@ -251,7 +251,7 @@ async def _stream_chat(
     model_name: str,
     *,
     trace_ctx: RequestTraceContext,
-    root_span: Any | None,
+    request_span: Any | None,
 ) -> StreamingResponse:
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -273,6 +273,7 @@ async def _stream_chat(
         yield f"data: {json.dumps(first)}\n\n"
         finish = "stop"
         outcome = "ok"
+        terminal_span = request_span
         try:
             if tracer is None:
                 log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
@@ -293,6 +294,7 @@ async def _stream_chat(
                         finish = "length" if chunk.get("done_reason") == "length" else "stop"
             else:
                 with tracer.start_as_current_span("request.chat") as span:
+                    terminal_span = span
                     for key, value in trace_ctx.attrs().items():
                         span.set_attribute(key, value)
                     log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
@@ -316,7 +318,7 @@ async def _stream_chat(
             finish = "stop"
             outcome = "failed"
         log_on_span(
-            root_span,
+            terminal_span,
             "request.completed",
             **trace_ctx.attrs(),
             outcome=outcome,
@@ -374,7 +376,7 @@ async def chat_completions(request: Request) -> Response:
         extra=trace_extra,
     )
     tracer = get_tracer()
-    root_span = get_current_trace_span()
+    request_span = get_current_trace_span()
 
     if stream:
         llm_requests_total.labels(logical_model=model.name, outcome="stream").inc()
@@ -385,7 +387,7 @@ async def chat_completions(request: Request) -> Response:
             options,
             model.name,
             trace_ctx=trace_ctx,
-            root_span=root_span,
+            request_span=request_span,
         )
 
     try:
@@ -394,6 +396,7 @@ async def chat_completions(request: Request) -> Response:
             result = await get_queue().submit(model, messages, tools, options, trace_ctx=trace_ctx)
         else:
             with tracer.start_as_current_span("request.chat") as span:
+                request_span = span
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
                 log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
@@ -408,7 +411,7 @@ async def chat_completions(request: Request) -> Response:
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log_on_span(
-            root_span,
+            request_span,
             "request.completed",
             "warning",
             **trace_ctx.attrs(),
@@ -419,7 +422,7 @@ async def chat_completions(request: Request) -> Response:
         # Opt-in hard fail (issue #33): the backend cut the context below the ask.
         llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
         log_on_span(
-            root_span,
+            request_span,
             "request.completed",
             "warning",
             **trace_ctx.attrs(),
@@ -430,7 +433,7 @@ async def chat_completions(request: Request) -> Response:
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
         log_on_span(
-            root_span,
+            request_span,
             "request.completed",
             "warning",
             **trace_ctx.attrs(),
@@ -441,7 +444,7 @@ async def chat_completions(request: Request) -> Response:
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
     log_on_span(
-        root_span,
+        request_span,
         "request.completed",
         **trace_ctx.attrs(),
         outcome="ok",
@@ -494,7 +497,7 @@ async def completions(request: Request) -> Response:
         extra=trace_extra,
     )
     tracer = get_tracer()
-    root_span = get_current_trace_span()
+    request_span = get_current_trace_span()
 
     try:
         if tracer is None:
@@ -502,6 +505,7 @@ async def completions(request: Request) -> Response:
             result = await get_queue().submit(model, messages, None, options, trace_ctx=trace_ctx)
         else:
             with tracer.start_as_current_span("request.completions") as span:
+                request_span = span
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
                 log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
@@ -516,7 +520,7 @@ async def completions(request: Request) -> Response:
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
         log_on_span(
-            root_span,
+            request_span,
             "request.completed",
             "warning",
             **trace_ctx.attrs(),
@@ -527,7 +531,7 @@ async def completions(request: Request) -> Response:
         # Opt-in hard fail (issue #33): the backend cut the context below the ask.
         llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
         log_on_span(
-            root_span,
+            request_span,
             "request.completed",
             "warning",
             **trace_ctx.attrs(),
@@ -538,7 +542,7 @@ async def completions(request: Request) -> Response:
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
         log_on_span(
-            root_span,
+            request_span,
             "request.completed",
             "warning",
             **trace_ctx.attrs(),
@@ -549,7 +553,7 @@ async def completions(request: Request) -> Response:
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
     log_on_span(
-        root_span,
+        request_span,
         "request.completed",
         **trace_ctx.attrs(),
         outcome="ok",

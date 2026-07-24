@@ -15,6 +15,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from opentelemetry import context as otel_context
+
 from . import resilience
 from .config import get_settings
 from .models import LogicalModel
@@ -43,6 +45,7 @@ class Job:
     # Defaulted to None only so it can trail trace_ctx in the dataclass; submit()
     # always constructs a Job with a live future, so the awaiting paths guard it.
     future: "asyncio.Future[UpstreamResult] | None" = field(default=None)
+    otel_context: Any | None = None
 
 
 class WorkQueue:
@@ -100,6 +103,7 @@ class WorkQueue:
             options=options,
             trace_ctx=trace_ctx,
             future=future,
+            otel_context=otel_context.get_current(),
         )
         try:
             self._queue.put_nowait(job)
@@ -133,6 +137,9 @@ class WorkQueue:
         while True:
             job = await queue.get()
             llm_queue_depth.set(queue.qsize())
+            context_token = (
+                otel_context.attach(job.otel_context) if job.otel_context is not None else None
+            )
             try:
                 result = await resilience.dispatch(
                     job.model,
@@ -147,6 +154,8 @@ class WorkQueue:
                 if job.future is not None and not job.future.done():
                     job.future.set_exception(exc)
             finally:
+                if context_token is not None:
+                    otel_context.detach(context_token)
                 queue.task_done()
 
 
