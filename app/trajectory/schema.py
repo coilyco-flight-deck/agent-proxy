@@ -212,6 +212,9 @@ class EvaluationRecordedPayload(Payload):
     evaluation_kind: str = "evaluation"
     annotator_ref: str | None = None
     annotator_role: str | None = None
+    chosen_ref: str | None = None
+    rejected_ref: str | None = None
+    reward: float | None = None
     input_refs: list[str] = Field(min_length=1)
     output_label: str | None = None
     score: float | None = None

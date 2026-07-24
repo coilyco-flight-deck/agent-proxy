@@ -19,12 +19,12 @@ Status legend:
 - **Append-only trajectory retention** - landed - an internal cold-path API validates and idempotently commits raw contract-v1 envelopes to SQLite, retains duplicate and quarantine receipts, blocks mutation with database triggers, and replays into fresh consumers. A bounded emitter keeps storage waits off the model hot path.
 - **Episode and trajectory materialization** - landed - deterministic connected-component assembly preserves every correlation dimension, orders events, exposes partial and late state, records retries, fallbacks, and human interventions, and appends content-hashed derived revisions.
 - **Evaluation and annotation records** - landed - automatic evaluations, verifiers, human annotations, and interventions join to stable trajectories with immutable evidence, supersession, disagreement, late-arrival, replay, redaction, and access-tier semantics.
+- **Versioned dataset exports** - landed - SFT, preference, verifier, reward, and held-out evaluation schemas produce write-once manifests with source provenance, content hashes, deterministic trajectory-level splits, reproducibility, and opt-in restricted body references.
 - **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
 
 ## Planned architecture v2
 
 - **LiteLLM commodity gateway integration** - planned - provider integration, routing, retries, fallbacks, keys, budgets, and cost accounting move behind a parity-proven LiteLLM boundary. See [#41](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41).
-- **Versioned dataset exports** - planned - SFT, preference, verifier, reward, and held-out-evaluation datasets with provenance. See [#46](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/46).
 - **Operational and governance views** - planned - controlled operational queries, Ward dossier inputs, and harness-fit comparisons. See [#47](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/47).
 
 ## References
@@ -35,5 +35,6 @@ Status legend:
 - [`trajectory-retention.md`](trajectory-retention.md) documents intake, raw retention, replay, and recovery.
 - [`trajectory-materialization.md`](trajectory-materialization.md) documents deterministic assembly and re-materialization.
 - [`evaluation-records.md`](evaluation-records.md) documents evaluation, annotation, and intervention evidence.
+- [`dataset-exports.md`](dataset-exports.md) documents schemas, manifests, split safety, and reproducibility.
 - [`ROADMAP.md`](ROADMAP.md) and [`work-graph.md`](work-graph.md) define execution order.
 - [`proxy.md`](proxy.md) remains the detailed guide to the currently landed reliability behavior.

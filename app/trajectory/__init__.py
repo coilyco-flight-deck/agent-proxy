@@ -21,6 +21,14 @@ from app.trajectory.evaluation import (
     assemble_evaluation_records,
     summarize_evaluations,
 )
+from app.trajectory.datasets import (
+    DatasetArtifact,
+    DatasetArtifactStore,
+    DatasetExporter,
+    DatasetManifest,
+    RedactionPolicy,
+    SplitPolicy,
+)
 from app.trajectory.store import (
     AsyncTrajectoryEmitter,
     IngestResult,
@@ -45,6 +53,12 @@ __all__ = [
     "EvaluationSummary",
     "assemble_evaluation_records",
     "summarize_evaluations",
+    "DatasetArtifact",
+    "DatasetArtifactStore",
+    "DatasetExporter",
+    "DatasetManifest",
+    "RedactionPolicy",
+    "SplitPolicy",
     "canonical_event_bytes",
     "event_json_schema",
     "validate_event",

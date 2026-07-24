@@ -19,7 +19,7 @@ The issues below are fresh implementation work for Agent Proxy architecture v2. 
    - Landed: adds evaluator, verifier, annotation, and human-intervention evidence.
 6. [#46 Versioned training and held-out evaluation exports](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/46)
    - Depends on #44 and #45.
-   - Produces reproducible SFT, preference, verifier, reward, and held-out evaluation manifests.
+   - Landed: produces reproducible SFT, preference, verifier, reward, and held-out evaluation manifests.
 7. [#47 Operational queries, Ward dossier inputs, and harness-fit views](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/47)
    - Depends on #43, #44, and #45.
    - Produces governed evidence views while keeping Ward as the authority.

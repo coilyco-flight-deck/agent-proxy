@@ -30,7 +30,7 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
    - Landed: evaluator, verifier, annotation, and human-intervention records append immutable evidence without changing Ward authority.
 6. [#46 Versioned training and held-out evaluation exports](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/46)
    - Depends on #44 and #45.
-   - Build reproducible SFT, preference, verifier, reward, and held-out evaluation artifacts.
+   - Landed: reproducible SFT, preference, verifier, reward, and held-out evaluation artifacts use write-once provenance manifests and trajectory-level splits.
 7. [#47 Operational queries, Ward dossier inputs, and harness-fit views](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/47)
    - Depends on #43, #44, and #45.
    - Turn retained evidence into controlled operational views and Ward dossier inputs.

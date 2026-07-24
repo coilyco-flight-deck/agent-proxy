@@ -58,12 +58,17 @@ class EvaluationRecord(BaseModel):
     evidence_refs: tuple[str, ...]
     output_label: str | None = None
     score: float | None = None
+    chosen_ref: str | None = None
+    rejected_ref: str | None = None
+    reward: float | None = None
     confidence: float = Field(ge=0, le=1)
     supersedes_evaluation_id: str | None = None
     occurred_at: str
     observed_at: str
     late: bool
     capture: str
+    body_ref: str
+    body_sha256: str
     redaction_status: str
     redaction_policy_version: str
     access_tier: str
@@ -136,12 +141,17 @@ def _event_to_record(
             evidence_refs=tuple(sorted(set(payload.input_refs + event.provenance.input_refs))),
             output_label=payload.output_label,
             score=payload.score,
+            chosen_ref=payload.chosen_ref,
+            rejected_ref=payload.rejected_ref,
+            reward=payload.reward,
             confidence=payload.confidence,
             supersedes_evaluation_id=payload.supersedes_ref,
             occurred_at=event.occurred_at.isoformat(),
             observed_at=event.observed_at.isoformat(),
             late=late,
             capture=event.content.capture,
+            body_ref=event.content.body_ref,
+            body_sha256=event.content.body_sha256,
             redaction_status=event.content.redaction.status,
             redaction_policy_version=event.content.redaction.policy_version,
             access_tier=payload.access_tier
@@ -175,6 +185,8 @@ def _event_to_record(
             observed_at=event.observed_at.isoformat(),
             late=late,
             capture=event.content.capture,
+            body_ref=event.content.body_ref,
+            body_sha256=event.content.body_sha256,
             redaction_status=event.content.redaction.status,
             redaction_policy_version=event.content.redaction.policy_version,
             access_tier=payload.access_tier

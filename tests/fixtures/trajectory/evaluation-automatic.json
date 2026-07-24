@@ -36,6 +36,9 @@
     "input_refs": [
       "event:018f6d1d-5e54-7c20-bf7e-5bd1ca1e8198"
     ],
+    "chosen_ref": "response:accepted",
+    "rejected_ref": "response:rejected",
+    "reward": 0.9,
     "output_label": "pass",
     "score": 0.9,
     "confidence": 0.95,

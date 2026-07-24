@@ -500,6 +500,18 @@
           "default": null,
           "title": "Annotator Role"
         },
+        "chosen_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chosen Ref"
+        },
         "confidence": {
           "maximum": 1,
           "minimum": 0,
@@ -564,6 +576,18 @@
           "default": null,
           "title": "Output Label"
         },
+        "rejected_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Ref"
+        },
         "retention_class": {
           "anyOf": [
             {
@@ -575,6 +599,18 @@
           ],
           "default": null,
           "title": "Retention Class"
+        },
+        "reward": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reward"
         },
         "rubric_version": {
           "anyOf": [
