@@ -24,7 +24,7 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
    - Landed: SQLite WAL retention, immutable receipt and quarantine ledgers, replay, and a bounded asynchronous emitter provide durable evidence outside the hot path.
 4. [#44 Episode and trajectory materialization](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/44)
    - Depends on #42 and #43.
-   - Join events with deterministic handling of partial and late data.
+   - Landed: deterministically joins retained events, exposes partial and late state, and appends provenance-preserving derived revisions.
 5. [#45 Evaluation and annotation records](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/45)
    - Depends on #42 and #44.
    - Add evaluator, verifier, and human records without changing Ward authority.

@@ -13,7 +13,7 @@ The issues below are fresh implementation work for Agent Proxy architecture v2. 
    - Landed: establishes durable, replayable SQLite evidence without using SigNoz as the sole store.
 4. [#44 Episode and trajectory materialization](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/44)
    - Depends on #42 and #43.
-   - Builds deterministic, re-materializable correlated trajectories.
+   - Landed: builds deterministic, re-materializable correlated trajectories.
 5. [#45 Evaluation and annotation records](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/45)
    - Depends on #42 and #44.
    - Adds evaluator, verifier, annotation, and human-intervention evidence.

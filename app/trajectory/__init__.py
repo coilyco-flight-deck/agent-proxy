@@ -8,6 +8,12 @@ from app.trajectory.schema import (
     event_json_schema,
     validate_event,
 )
+from app.trajectory.materialize import (
+    MaterializationStore,
+    MaterializedTrajectory,
+    TrajectoryMaterializer,
+    materialize_retained_events,
+)
 from app.trajectory.store import (
     AsyncTrajectoryEmitter,
     IngestResult,
@@ -23,6 +29,10 @@ __all__ = [
     "AsyncTrajectoryEmitter",
     "IngestResult",
     "ReplayResult",
+    "MaterializationStore",
+    "MaterializedTrajectory",
+    "TrajectoryMaterializer",
+    "materialize_retained_events",
     "canonical_event_bytes",
     "event_json_schema",
     "validate_event",
