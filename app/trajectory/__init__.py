@@ -43,6 +43,10 @@ from app.trajectory.store import (
     ReplayResult,
     TrajectoryStore,
 )
+from app.trajectory.agent_compose import (
+    events_from_agent_compose_bundle,
+    ingest_agent_compose_bundle,
+)
 
 __all__ = [
     "CURRENT_SCHEMA_NAME",
@@ -73,6 +77,8 @@ __all__ = [
     "QueryContract",
     "WardDossierInput",
     "query_contracts",
+    "events_from_agent_compose_bundle",
+    "ingest_agent_compose_bundle",
     "canonical_event_bytes",
     "event_json_schema",
     "validate_event",

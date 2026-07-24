@@ -22,6 +22,10 @@ Status legend:
 - **Versioned dataset exports** - landed - SFT, preference, verifier, reward, and held-out evaluation schemas produce write-once manifests with source provenance, content hashes, deterministic trajectory-level splits, reproducibility, and opt-in restricted body references.
 - **Operational and governance views** - landed - internal reliability, cost and latency, policy, evaluation, and harness-fit query contracts join durable trajectories to OTLP context, enforce access tiers, publish freshness and reconstruction limits, and provide evidence-only Ward dossier inputs.
 - **LiteLLM parity decision and runner** - landed - a machine-readable comparison selects standalone LiteLLM, while an executable endpoint probe gates model discovery, chat shape, streaming, finish reasons, usage, and error mapping. Runtime integration and live parity remain planned.
+- **Agent-compose trajectory ingestion** - landed - a cold-path adapter maps the
+  immutable manifest and public-safe decision trace into actor, artifact, and
+  observation events without copying the opaque context tree or granting
+  execution authority. See [agent-compose-ingestion.md](agent-compose-ingestion.md).
 - **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
 
 ## Planned architecture v2

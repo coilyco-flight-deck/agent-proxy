@@ -29,6 +29,8 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - Reproducible SFT, preference, verifier, reward, and held-out evaluation exports with write-once manifests and trajectory-level leakage prevention.
 - Governed reliability, cost and latency, policy, evaluation, and harness-fit views with OTLP joins, freshness metadata, and evidence-only Ward dossier inputs.
 - A machine-readable standalone-versus-SDK LiteLLM decision and executable endpoint parity runner. LiteLLM runtime integration has not landed.
+- Cold-path agent-compose bundle ingestion that retains role, selected-skill,
+  artifact, and decision evidence without copying the opaque context tree.
 
 `docs/FEATURES.md` is the complete current inventory. Planned v2 components are deliberately marked planned there.
 
