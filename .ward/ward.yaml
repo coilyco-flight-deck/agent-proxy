@@ -40,6 +40,9 @@ commands:
   litellm-parity:
     run: uv run python scripts/litellm_parity.py
     description: Compare the current Agent Proxy surface with a standalone LiteLLM candidate.
+  trajectory-evidence:
+    run: uv run python scripts/trajectory_evidence.py
+    description: Prove a durable trajectory ledger through online backup and replay.
   ingest-agent-compose:
     run: uv run python scripts/ingest_agent_compose.py
     description: Ingest one verified agent-compose bundle into the durable trajectory store.

@@ -30,6 +30,14 @@ class ProbeCheck(BaseModel):
     detail: str
 
 
+class LiveEvidenceGate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    status: Literal["not_run"]
+    detail: str
+
+
 class EndpointProbe(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -49,6 +57,7 @@ class ParityReport(BaseModel):
     baseline: EndpointProbe
     candidate: EndpointProbe
     matching_checks: tuple[ProbeCheck, ...]
+    live_evidence_gates: tuple[LiveEvidenceGate, ...]
     surface_parity_passed: bool
     cutover_authorized: bool = False
 
@@ -136,6 +145,36 @@ def selected_boundary() -> str:
     return "standalone"
 
 
+def live_evidence_gates() -> tuple[LiveEvidenceGate, ...]:
+    """Name checks that cannot be inferred from OpenAI surface compatibility."""
+
+    return tuple(
+        LiveEvidenceGate(name=name, status="not_run", detail=detail)
+        for name, detail in (
+            (
+                "virtual_key_isolation",
+                "Generate scoped keys and prove allowed and denied model access.",
+            ),
+            (
+                "budget_and_spend",
+                "Prove persisted spend attribution and rejection after a budget is exhausted.",
+            ),
+            (
+                "provider_fallback",
+                "Inject a deterministic provider failure and observe the configured fallback.",
+            ),
+            (
+                "trace_join_without_bodies",
+                "Join Ward, Agent Proxy, and LiteLLM trace context in SigNoz with no body attributes.",
+            ),
+            (
+                "delivered_context",
+                "Observe the tower receiving the requested safe num_ctx and completing within it.",
+            ),
+        )
+    )
+
+
 async def probe_endpoint(
     endpoint: str,
     model: str,
@@ -172,7 +211,12 @@ async def probe_endpoint(
 
         request = {
             "model": model,
-            "messages": [{"role": "user", "content": "parity fixture"}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Call parity_tool once with an empty object.",
+                }
+            ],
             "tools": [
                 {
                     "type": "function",
@@ -187,6 +231,7 @@ async def probe_endpoint(
                 "ward.run_id": "fixture-run",
                 "agentproxy.request_id": "fixture-request",
             },
+            "num_ctx": 32768,
         }
         try:
             response = await client.post("/v1/chat/completions", json=request)
@@ -214,10 +259,58 @@ async def probe_endpoint(
                     detail=str(choice.get("finish_reason")),
                 )
             )
+            tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+            tool_call = tool_calls[0] if isinstance(tool_calls, list) and tool_calls else {}
+            function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+            arguments = function.get("arguments") if isinstance(function, dict) else None
+            try:
+                decoded_arguments = (
+                    json.loads(arguments) if isinstance(arguments, str) else arguments
+                )
+            except json.JSONDecodeError:
+                decoded_arguments = None
+            checks.append(
+                ProbeCheck(
+                    name="tool_call_shape",
+                    passed=(
+                        function.get("name") == "parity_tool"
+                        and isinstance(decoded_arguments, dict)
+                    ),
+                    detail="OpenAI function name and JSON-object arguments",
+                )
+            )
+            reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
+            checks.append(
+                ProbeCheck(
+                    name="reasoning_shape",
+                    passed=reasoning is None or isinstance(reasoning, str),
+                    detail="absent" if reasoning is None else "string",
+                )
+            )
+            checks.append(
+                ProbeCheck(
+                    name="num_ctx_request_accepted",
+                    passed=True,
+                    detail="accepted explicit num_ctx=32768",
+                )
+            )
         except Exception as exc:
             checks.append(ProbeCheck(name="chat_shape", passed=False, detail=str(exc)))
             checks.append(
                 ProbeCheck(name="finish_reason", passed=False, detail="chat request failed")
+            )
+            checks.append(
+                ProbeCheck(name="tool_call_shape", passed=False, detail="chat request failed")
+            )
+            checks.append(
+                ProbeCheck(name="reasoning_shape", passed=False, detail="chat request failed")
+            )
+            checks.append(
+                ProbeCheck(
+                    name="num_ctx_request_accepted",
+                    passed=False,
+                    detail="chat request failed",
+                )
             )
 
         try:
@@ -319,6 +412,7 @@ async def compare_endpoints(
         baseline=baseline,
         candidate=candidate,
         matching_checks=matching,
+        live_evidence_gates=live_evidence_gates(),
         surface_parity_passed=bool(matching) and all(check.passed for check in matching),
         cutover_authorized=False,
     )

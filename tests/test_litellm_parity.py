@@ -59,8 +59,22 @@ def _transport(*, stream_done: bool = True) -> httpx.MockTransport:
                 "choices": [
                     {
                         "index": 0,
-                        "message": {"role": "assistant", "content": "ok"},
-                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "reasoning_content": "fixture reasoning",
+                            "tool_calls": [
+                                {
+                                    "id": "call_fixture",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "parity_tool",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
                     }
                 ],
                 "usage": {
@@ -97,6 +111,9 @@ async def test_endpoint_probe_covers_models_chat_stream_and_errors():
         "model_discovery",
         "chat_shape",
         "finish_reason",
+        "tool_call_shape",
+        "reasoning_shape",
+        "num_ctx_request_accepted",
         "completion_shape",
         "streaming",
         "unknown_model_error",

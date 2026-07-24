@@ -409,12 +409,23 @@ class TrajectoryStore:
             ).fetchall()
         return tuple(validate_event(_parse_payload(bytes(row["envelope"]))) for row in rows)
 
+    def backup_to(self, path: str | Path) -> Path:
+        """Write one transactionally consistent SQLite backup."""
+
+        self.initialize()
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as source, sqlite3.connect(target) as destination:
+            source.backup(destination)
+        return target
+
     def replay_into(
         self,
         consumer: "TrajectoryStore",
         *,
         occurred_from: datetime | None = None,
         occurred_to: datetime | None = None,
+        record_receipts: bool = True,
     ) -> ReplayResult:
         events = tuple(self.iter_events(occurred_from=occurred_from, occurred_to=occurred_to))
         accepted = 0
@@ -429,24 +440,25 @@ class TrajectoryStore:
                 duplicates += 1
             else:
                 quarantined += 1
-            with self._connect() as connection:
-                self._insert_receipt(
-                    connection,
-                    outcome="replayed",
-                    raw=raw,
-                    digest=hashlib.sha256(raw).hexdigest(),
-                    event_id=str(event.event_id),
-                    canonical_event_id=str(event.event_id),
-                    source_name=event.source.name,
-                    idempotency_key=event.idempotency_key,
-                    errors=(
-                        {
-                            "location": [],
-                            "message": f"consumer outcome: {result.outcome}",
-                            "type": "replay_outcome",
-                        },
-                    ),
-                )
+            if record_receipts:
+                with self._connect() as connection:
+                    self._insert_receipt(
+                        connection,
+                        outcome="replayed",
+                        raw=raw,
+                        digest=hashlib.sha256(raw).hexdigest(),
+                        event_id=str(event.event_id),
+                        canonical_event_id=str(event.event_id),
+                        source_name=event.source.name,
+                        idempotency_key=event.idempotency_key,
+                        errors=(
+                            {
+                                "location": [],
+                                "message": f"consumer outcome: {result.outcome}",
+                                "type": "replay_outcome",
+                            },
+                        ),
+                    )
         return ReplayResult(
             attempted=len(events),
             accepted=accepted,

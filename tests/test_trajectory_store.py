@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.trajectory import AsyncTrajectoryEmitter, TrajectoryStore
+from app.trajectory.evidence import verify_trajectory_recovery
 
 FIXTURES = Path("tests/fixtures/trajectory")
 
@@ -99,6 +100,38 @@ def test_replay_rebuilds_a_fresh_consumer_and_records_receipt(tmp_path):
         "replayed",
         "replayed",
     )
+
+
+def test_online_backup_and_replay_evidence_is_counts_only(tmp_path):
+    source = TrajectoryStore(tmp_path / "source.sqlite3")
+    source.ingest(_fixture("valid.json"))
+    source.ingest(_fixture("late-event.json"))
+
+    evidence = verify_trajectory_recovery(
+        source.path,
+        tmp_path / "backup.sqlite3",
+        tmp_path / "replay.sqlite3",
+    )
+
+    assert evidence.passed is True
+    assert evidence.source_events == 2
+    assert evidence.backup_events == 2
+    assert evidence.replay_events == 2
+    assert evidence.replay.accepted == 2
+    assert evidence.source_quarantined_receipts == 0
+    rendered = evidence.model_dump(mode="json")
+    assert "raw_envelope" not in str(rendered)
+    assert "parity fixture" not in str(rendered)
+
+
+def test_recovery_evidence_refuses_to_overwrite_artifacts(tmp_path):
+    source = TrajectoryStore(tmp_path / "source.sqlite3")
+    source.ingest(_fixture("valid.json"))
+    backup = tmp_path / "backup.sqlite3"
+    backup.touch()
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        verify_trajectory_recovery(source.path, backup, tmp_path / "replay.sqlite3")
 
 
 async def test_async_emitter_is_bounded_and_flushes_to_durable_store(tmp_path):
