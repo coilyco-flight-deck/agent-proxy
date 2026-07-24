@@ -16,7 +16,7 @@ The issues below are fresh implementation work for Agent Proxy architecture v2. 
    - Landed: builds deterministic, re-materializable correlated trajectories.
 5. [#45 Evaluation and annotation records](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/45)
    - Depends on #42 and #44.
-   - Adds evaluator, verifier, annotation, and human-intervention evidence.
+   - Landed: adds evaluator, verifier, annotation, and human-intervention evidence.
 6. [#46 Versioned training and held-out evaluation exports](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/46)
    - Depends on #44 and #45.
    - Produces reproducible SFT, preference, verifier, reward, and held-out evaluation manifests.

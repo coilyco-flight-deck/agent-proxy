@@ -1,0 +1,65 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e81a5",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "evaluation.recorded",
+  "occurred_at": "2026-07-23T05:32:00Z",
+  "observed_at": "2026-07-23T06:32:00Z",
+  "source": {
+    "name": "fixture-annotation",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "fixture-evaluation-human",
+  "correlation": {
+    "ward_run_id": "fixture-run",
+    "episode_id": "fixture-episode",
+    "repository": "example/repository",
+    "issue_ref": "example/repository#42",
+    "workflow": "direct-to-main"
+  },
+  "actor": {
+    "type": "human",
+    "id": "fixture-annotator",
+    "role": "reviewer"
+  },
+  "attributes": {
+    "service.name": "fixture-annotation"
+  },
+  "payload": {
+    "evaluation_id": "evaluation:human:1",
+    "evaluation_kind": "annotation",
+    "evaluator": "fixture-review",
+    "evaluator_version": "1.0.0",
+    "rubric_version": "rubric-v1",
+    "annotator_ref": "actor:fixture-reviewer",
+    "annotator_role": "reviewer",
+    "input_refs": [
+      "event:018f6d1d-5e54-7c20-bf7e-5bd1ca1e8198"
+    ],
+    "output_label": "pass",
+    "confidence": 1.0,
+    "supersedes_ref": "evaluation:auto:1",
+    "access_tier": "restricted"
+  },
+  "content": {
+    "capture": "restricted_body",
+    "body_ref": "content:fixture-annotation",
+    "body_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "redaction": {
+      "status": "restricted",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [
+      "018f6d1d-5e54-7c20-bf7e-5bd1ca1e8198"
+    ],
+    "input_refs": [
+      "annotation:fixture"
+    ],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e81a4",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "evaluation.recorded",
+  "occurred_at": "2026-07-23T05:31:00Z",
+  "observed_at": "2026-07-23T05:31:01Z",
+  "source": {
+    "name": "fixture-evaluator",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "fixture-evaluation-automatic",
+  "correlation": {
+    "ward_run_id": "fixture-run",
+    "episode_id": "fixture-episode",
+    "repository": "example/repository",
+    "issue_ref": "example/repository#42",
+    "workflow": "direct-to-main"
+  },
+  "actor": {
+    "type": "system",
+    "id": "fixture-verifier",
+    "role": "verifier"
+  },
+  "attributes": {
+    "service.name": "fixture-evaluator"
+  },
+  "payload": {
+    "evaluation_id": "evaluation:auto:1",
+    "evaluation_kind": "verifier",
+    "evaluator": "fixture-verifier",
+    "evaluator_version": "1.0.0",
+    "verifier_version": "verifier-v1",
+    "rubric_version": "rubric-v1",
+    "input_refs": [
+      "event:018f6d1d-5e54-7c20-bf7e-5bd1ca1e8198"
+    ],
+    "output_label": "pass",
+    "score": 0.9,
+    "confidence": 0.95,
+    "access_tier": "internal"
+  },
+  "content": {
+    "capture": "metadata_only",
+    "body_ref": "",
+    "body_sha256": "",
+    "redaction": {
+      "status": "not_captured",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [
+      "018f6d1d-5e54-7c20-bf7e-5bd1ca1e8198"
+    ],
+    "input_refs": [
+      "rubric:fixture-v1"
+    ],
+    "transform": "fixture-verifier",
+    "transform_version": "1.0.0",
+    "content_sha256": ""
+  }
+}

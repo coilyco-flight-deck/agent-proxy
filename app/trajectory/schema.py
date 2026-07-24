@@ -206,6 +206,12 @@ class StateChangedPayload(Payload):
 class EvaluationRecordedPayload(Payload):
     evaluation_id: str = Field(min_length=1)
     evaluator_version: str = Field(min_length=1)
+    evaluator: str | None = None
+    rubric_version: str | None = None
+    verifier_version: str | None = None
+    evaluation_kind: str = "evaluation"
+    annotator_ref: str | None = None
+    annotator_role: str | None = None
     input_refs: list[str] = Field(min_length=1)
     output_label: str | None = None
     score: float | None = None

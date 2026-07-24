@@ -14,6 +14,13 @@ from app.trajectory.materialize import (
     TrajectoryMaterializer,
     materialize_retained_events,
 )
+from app.trajectory.evaluation import (
+    EvaluationRecord,
+    EvaluationStore,
+    EvaluationSummary,
+    assemble_evaluation_records,
+    summarize_evaluations,
+)
 from app.trajectory.store import (
     AsyncTrajectoryEmitter,
     IngestResult,
@@ -33,6 +40,11 @@ __all__ = [
     "MaterializedTrajectory",
     "TrajectoryMaterializer",
     "materialize_retained_events",
+    "EvaluationRecord",
+    "EvaluationStore",
+    "EvaluationSummary",
+    "assemble_evaluation_records",
+    "summarize_evaluations",
     "canonical_event_bytes",
     "event_json_schema",
     "validate_event",

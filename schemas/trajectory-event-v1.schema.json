@@ -476,6 +476,30 @@
           "default": null,
           "title": "Access Tier"
         },
+        "annotator_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Annotator Ref"
+        },
+        "annotator_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Annotator Role"
+        },
         "confidence": {
           "maximum": 1,
           "minimum": 0,
@@ -486,6 +510,23 @@
           "minLength": 1,
           "title": "Evaluation Id",
           "type": "string"
+        },
+        "evaluation_kind": {
+          "default": "evaluation",
+          "title": "Evaluation Kind",
+          "type": "string"
+        },
+        "evaluator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evaluator"
         },
         "evaluator_version": {
           "minLength": 1,
@@ -535,6 +576,18 @@
           "default": null,
           "title": "Retention Class"
         },
+        "rubric_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rubric Version"
+        },
         "score": {
           "anyOf": [
             {
@@ -558,6 +611,18 @@
           ],
           "default": null,
           "title": "Supersedes Ref"
+        },
+        "verifier_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verifier Version"
         }
       },
       "required": [

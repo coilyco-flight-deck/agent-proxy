@@ -1,0 +1,55 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e81a6",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "human.intervened",
+  "occurred_at": "2026-07-23T05:33:00Z",
+  "observed_at": "2026-07-23T05:33:01Z",
+  "source": {
+    "name": "ward",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "fixture-human-intervention",
+  "correlation": {
+    "ward_run_id": "fixture-run",
+    "episode_id": "fixture-episode",
+    "repository": "example/repository",
+    "issue_ref": "example/repository#42",
+    "workflow": "direct-to-main"
+  },
+  "actor": {
+    "type": "human",
+    "id": "fixture-operator",
+    "role": "operator"
+  },
+  "attributes": {
+    "service.name": "ward"
+  },
+  "payload": {
+    "intervention_kind": "approval",
+    "human_role": "operator",
+    "actor_ref": "actor:fixture-operator",
+    "rationale_ref": "rationale:fixture",
+    "affected_ref": "action:fixture",
+    "access_tier": "internal"
+  },
+  "content": {
+    "capture": "metadata_only",
+    "body_ref": "",
+    "body_sha256": "",
+    "redaction": {
+      "status": "not_captured",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [],
+    "input_refs": [
+      "rationale:fixture"
+    ],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}
