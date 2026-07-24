@@ -1,5 +1,7 @@
 """num_ctx injection and OpenAI<->ollama translation (leg 04 step 2)."""
 
+import json
+
 import pytest
 
 from app import upstream
@@ -146,7 +148,7 @@ async def test_openai_backend_uses_chat_completions(monkeypatch, openai_backend)
     assert result.eval_count == 7
 
 
-async def test_span_attrs_flow_to_upstream_span(monkeypatch, backend):
+async def test_span_attrs_flow_to_upstream_span_and_log(monkeypatch, backend, capsys):
     spans = []
     tracer = _Tracer(spans)
     fake = _CapturingClient({"message": {"content": "ok"}})
@@ -171,3 +173,8 @@ async def test_span_attrs_flow_to_upstream_span(monkeypatch, backend):
     assert attrs["ward.run_id"] == "run-1"
     assert attrs["ward.target_repo"] == "repo-1"
     assert attrs["ward.issue_ref"] == "issue-1"
+    log_payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert log_payload["event"] == "upstream.completed"
+    assert log_payload["outcome"] == "ok"
+    assert log_payload["backend"] == "tower"
+    assert log_payload["ward.run_id"] == "run-1"

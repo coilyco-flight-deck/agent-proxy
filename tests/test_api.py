@@ -109,6 +109,34 @@ def test_chat_completion_openai_shape(client):
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
 
+def test_chat_completion_emits_request_lifecycle_logs(client, monkeypatch):
+    events = []
+
+    class CapturingLog:
+        def info(self, event, **fields):
+            events.append((event, fields))
+
+    def capture_span_log(_span, event, **fields):
+        events.append((event, fields))
+
+    monkeypatch.setattr("app.main.log", CapturingLog())
+    monkeypatch.setattr("app.main.log_on_span", capture_span_log)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "messages": [{"role": "user", "content": "capital of France?"}],
+        },
+    )
+
+    assert resp.status_code == 200
+    assert ("request.accepted", "accepted") in [
+        (event, fields["outcome"]) for event, fields in events
+    ]
+    assert ("request.completed", "ok") in [(event, fields["outcome"]) for event, fields in events]
+
+
 def test_chat_completion_uses_tracing(monkeypatch):
     spans = []
     tracer = _Tracer(spans)

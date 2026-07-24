@@ -19,7 +19,7 @@ import httpx
 
 from .config import get_settings
 from .models import Backend
-from .obs import get_tracer
+from .obs import get_tracer, log
 
 
 class UpstreamError(Exception):
@@ -44,6 +44,39 @@ class UpstreamResult:
 
 
 _client: httpx.AsyncClient | None = None
+
+
+def _correlation_log_fields(span_attrs: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep request joins in upstream logs without copying opt-in body fields."""
+    if not span_attrs:
+        return {}
+
+    fields: dict[str, Any] = {}
+    mapped_keys = {
+        "agentproxy.logical_model": "logical_model",
+        "gen_ai.request.model": "request_model",
+        "agentproxy.request_kind": "request_kind",
+        "agentproxy.request_id": "request_id",
+    }
+    for source, target in mapped_keys.items():
+        if source in span_attrs:
+            fields[target] = span_attrs[source]
+
+    for key in (
+        "ward.run_id",
+        "ward.container_name",
+        "ward.role",
+        "ward.harness",
+        "ward.target_repo",
+        "ward.issue_ref",
+        "ward.workflow",
+        "ward.context_level",
+        "ward.version",
+        "agent.session_id",
+    ):
+        if key in span_attrs:
+            fields[key] = span_attrs[key]
+    return fields
 
 
 def get_client() -> httpx.AsyncClient:
@@ -177,6 +210,13 @@ async def chat(
         except httpx.HTTPError as exc:
             span.record_exception(exc)
             span.set_attribute("agentproxy.upstream.error", str(exc))
+            log.warning(
+                "upstream.completed",
+                **_correlation_log_fields(span_attrs),
+                backend=backend.name,
+                backend_dialect=backend.dialect,
+                outcome="failed",
+            )
             raise UpstreamError(f"{backend.name}: {exc}") from exc
         result = (
             _parse_chat_response(resp.json())
@@ -187,6 +227,13 @@ async def chat(
         span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
         span.set_attribute(
             "response.finish_reasons", [result.done_reason] if result.done_reason else []
+        )
+        log.info(
+            "upstream.completed",
+            **_correlation_log_fields(span_attrs),
+            backend=backend.name,
+            backend_dialect=backend.dialect,
+            outcome="ok",
         )
         return result
 
@@ -256,10 +303,24 @@ async def chat_stream(
                 if choice.get("finish_reason"):
                     out["done_reason"] = choice.get("finish_reason")
                 yield out
+        log.info(
+            "upstream.completed",
+            **_correlation_log_fields(span_attrs),
+            backend=backend.name,
+            backend_dialect=backend.dialect,
+            outcome="ok",
+        )
     except httpx.HTTPError as exc:
         if span_cm is not None:
             span.record_exception(exc)
             span.set_attribute("agentproxy.upstream.error", str(exc))
+        log.warning(
+            "upstream.completed",
+            **_correlation_log_fields(span_attrs),
+            backend=backend.name,
+            backend_dialect=backend.dialect,
+            outcome="failed",
+        )
         raise UpstreamError(f"{backend.name}: {exc}") from exc
     finally:
         if span_cm is not None:

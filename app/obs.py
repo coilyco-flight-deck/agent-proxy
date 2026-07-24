@@ -227,6 +227,42 @@ def _current_span():
     return span
 
 
+def get_current_recording_span():
+    """Return the active recording span so callers can preserve its context."""
+    return _current_span()
+
+
+def log_on_span(
+    span: Any | None,
+    event: str,
+    level: str = "info",
+    /,
+    **fields: object,
+) -> None:
+    """Emit one structured record against an explicitly selected span."""
+    logger = getattr(log, level)
+    if span is None:
+        logger(event, **fields)
+        return
+
+    try:
+        from opentelemetry import trace
+
+        span_scope = trace.use_span(span, end_on_exit=False)
+    except Exception:
+        logger(event, **fields)
+        return
+
+    emitted = False
+    try:
+        with span_scope:
+            logger(event, **fields)
+            emitted = True
+    except Exception:
+        if not emitted:
+            logger(event, **fields)
+
+
 def emit_instrumented_action(action: InstrumentedAction) -> None:
     """Emit the log, metric, and current-span event for one instrumented action."""
     getattr(log, action.level)(action.log_event, **action.fields)

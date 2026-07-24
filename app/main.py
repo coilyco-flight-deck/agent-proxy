@@ -29,11 +29,13 @@ from .models import list_tags, resolve
 from .skill_use import ingest_skill_use_source
 from .obs import (
     RequestTraceContext,
+    get_current_recording_span,
     get_tracer,
     is_trace_bodies_enabled,
     llm_prompt_tokens,
     llm_requests_total,
     log,
+    log_on_span,
     metrics_text,
 )
 from .queue import QueueBusy, get_queue
@@ -242,7 +244,14 @@ async def list_models() -> dict[str, Any]:
 
 
 async def _stream_chat(
-    model, messages, tools, options, model_name: str, *, trace_ctx: RequestTraceContext
+    model,
+    messages,
+    tools,
+    options,
+    model_name: str,
+    *,
+    trace_ctx: RequestTraceContext,
+    root_span: Any | None,
 ) -> StreamingResponse:
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -263,8 +272,10 @@ async def _stream_chat(
         }
         yield f"data: {json.dumps(first)}\n\n"
         finish = "stop"
+        outcome = "ok"
         try:
             if tracer is None:
+                log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
                 async for chunk in resilience.dispatch_stream(
                     model, messages, tools=tools, options=options, trace_ctx=trace_ctx
                 ):
@@ -284,6 +295,7 @@ async def _stream_chat(
                 with tracer.start_as_current_span("request.chat") as span:
                     for key, value in trace_ctx.attrs().items():
                         span.set_attribute(key, value)
+                    log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
                     async for chunk in resilience.dispatch_stream(
                         model, messages, tools=tools, options=options, trace_ctx=trace_ctx
                     ):
@@ -302,6 +314,13 @@ async def _stream_chat(
         except AllBackendsFailed as exc:
             log.warning("stream.failed", **trace_ctx.attrs(), error=str(exc), outcome="failed")
             finish = "stop"
+            outcome = "failed"
+        log_on_span(
+            root_span,
+            "request.completed",
+            **trace_ctx.attrs(),
+            outcome=outcome,
+        )
         final = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
         yield f"data: {json.dumps(final)}\n\n"
         yield "data: [DONE]\n\n"
@@ -355,18 +374,29 @@ async def chat_completions(request: Request) -> Response:
         extra=trace_extra,
     )
     tracer = get_tracer()
+    root_span = get_current_recording_span()
 
     if stream:
         llm_requests_total.labels(logical_model=model.name, outcome="stream").inc()
-        return await _stream_chat(model, messages, tools, options, model.name, trace_ctx=trace_ctx)
+        return await _stream_chat(
+            model,
+            messages,
+            tools,
+            options,
+            model.name,
+            trace_ctx=trace_ctx,
+            root_span=root_span,
+        )
 
     try:
         if tracer is None:
+            log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
             result = await get_queue().submit(model, messages, tools, options, trace_ctx=trace_ctx)
         else:
             with tracer.start_as_current_span("request.chat") as span:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
+                log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
                 result = await get_queue().submit(
                     model, messages, tools, options, trace_ctx=trace_ctx
                 )
@@ -377,13 +407,21 @@ async def chat_completions(request: Request) -> Response:
                 )
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
-        log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")
+        log_on_span(
+            root_span,
+            "request.completed",
+            "warning",
+            **trace_ctx.attrs(),
+            outcome="rejected",
+        )
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
     except ContextTruncated as exc:
         # Opt-in hard fail (issue #33): the backend cut the context below the ask.
         llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
-        log.warning(
-            "request.context_truncated",
+        log_on_span(
+            root_span,
+            "request.completed",
+            "warning",
             **trace_ctx.attrs(),
             outcome="context-truncated",
             error=str(exc),
@@ -391,11 +429,23 @@ async def chat_completions(request: Request) -> Response:
         return _error(502, str(exc), "context_truncated")
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
-        log.warning("request.failed", **trace_ctx.attrs(), outcome="failed", error=str(exc))
+        log_on_span(
+            root_span,
+            "request.completed",
+            "warning",
+            **trace_ctx.attrs(),
+            outcome="failed",
+            error=str(exc),
+        )
         return _error(502, str(exc), "upstream_error")
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
-    log.info("request.ok", **trace_ctx.attrs(), outcome="ok")
+    log_on_span(
+        root_span,
+        "request.completed",
+        **trace_ctx.attrs(),
+        outcome="ok",
+    )
     return JSONResponse(content=_chat_completion_response(model.name, result))
 
 
@@ -444,14 +494,17 @@ async def completions(request: Request) -> Response:
         extra=trace_extra,
     )
     tracer = get_tracer()
+    root_span = get_current_recording_span()
 
     try:
         if tracer is None:
+            log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
             result = await get_queue().submit(model, messages, None, options, trace_ctx=trace_ctx)
         else:
             with tracer.start_as_current_span("request.completions") as span:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
+                log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
                 result = await get_queue().submit(
                     model, messages, None, options, trace_ctx=trace_ctx
                 )
@@ -462,13 +515,21 @@ async def completions(request: Request) -> Response:
                 )
     except QueueBusy:
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
-        log.warning("request.rejected", **trace_ctx.attrs(), outcome="rejected")
+        log_on_span(
+            root_span,
+            "request.completed",
+            "warning",
+            **trace_ctx.attrs(),
+            outcome="rejected",
+        )
         return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
     except ContextTruncated as exc:
         # Opt-in hard fail (issue #33): the backend cut the context below the ask.
         llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
-        log.warning(
-            "request.context_truncated",
+        log_on_span(
+            root_span,
+            "request.completed",
+            "warning",
             **trace_ctx.attrs(),
             outcome="context-truncated",
             error=str(exc),
@@ -476,11 +537,23 @@ async def completions(request: Request) -> Response:
         return _error(502, str(exc), "context_truncated")
     except AllBackendsFailed as exc:
         llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
-        log.warning("request.failed", **trace_ctx.attrs(), outcome="failed", error=str(exc))
+        log_on_span(
+            root_span,
+            "request.completed",
+            "warning",
+            **trace_ctx.attrs(),
+            outcome="failed",
+            error=str(exc),
+        )
         return _error(502, str(exc), "upstream_error")
 
     llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
-    log.info("request.ok", **trace_ctx.attrs(), outcome="ok")
+    log_on_span(
+        root_span,
+        "request.completed",
+        **trace_ctx.attrs(),
+        outcome="ok",
+    )
     return JSONResponse(
         content={
             "id": f"cmpl-{uuid.uuid4().hex}",

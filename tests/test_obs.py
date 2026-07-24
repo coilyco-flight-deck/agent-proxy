@@ -11,6 +11,7 @@ from app.obs import (
     emit_instrumented_action,
     get_logger,
     init_sentry,
+    log_on_span,
     metrics_text,
 )
 
@@ -87,6 +88,26 @@ def test_trace_context_processor_is_failure_safe(monkeypatch):
     event = {"event": "still-logged"}
 
     assert _add_trace_context(None, "info", event) == {"event": "still-logged"}
+
+
+def test_log_on_span_activates_requested_trace_context(capsys):
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+    span = NonRecordingSpan(
+        SpanContext(
+            trace_id=0x123,
+            span_id=0x456,
+            is_remote=False,
+            trace_flags=TraceFlags(0x01),
+        )
+    )
+
+    log_on_span(span, "root.completed")
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["event"] == "root.completed"
+    assert payload["trace_id"] == "00000000000000000000000000000123"
+    assert payload["span_id"] == "0000000000000456"
 
 
 def test_emit_instrumented_action_hits_log_metric_and_span(monkeypatch, capsys):
