@@ -6,6 +6,7 @@ import pytest
 
 from app.obs import (
     InstrumentedAction,
+    _add_trace_context,
     _otlp_http_traces_url,
     emit_instrumented_action,
     get_logger,
@@ -43,6 +44,49 @@ def test_get_logger_emits_json(capsys):
     payload = json.loads(line)
     assert payload["event"] == "hello"
     assert payload["k"] == 1
+
+
+def test_get_logger_adds_active_trace_context(monkeypatch, capsys):
+    class SpanContext:
+        is_valid = True
+        trace_id = 0x123
+        span_id = 0x456
+
+    class Span:
+        def get_span_context(self):
+            return SpanContext()
+
+    monkeypatch.setattr("opentelemetry.trace.get_current_span", lambda: Span())
+
+    get_logger("t").info("correlated")
+
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["trace_id"] == "00000000000000000000000000000123"
+    assert payload["span_id"] == "0000000000000456"
+
+
+def test_trace_context_processor_leaves_invalid_context_unchanged(monkeypatch):
+    class SpanContext:
+        is_valid = False
+
+    class Span:
+        def get_span_context(self):
+            return SpanContext()
+
+    monkeypatch.setattr("opentelemetry.trace.get_current_span", lambda: Span())
+    event = {"event": "uncorrelated"}
+
+    assert _add_trace_context(None, "info", event) == {"event": "uncorrelated"}
+
+
+def test_trace_context_processor_is_failure_safe(monkeypatch):
+    def fail():
+        raise RuntimeError("trace context unavailable")
+
+    monkeypatch.setattr("opentelemetry.trace.get_current_span", fail)
+    event = {"event": "still-logged"}
+
+    assert _add_trace_context(None, "info", event) == {"event": "still-logged"}
 
 
 def test_emit_instrumented_action_hits_log_metric_and_span(monkeypatch, capsys):

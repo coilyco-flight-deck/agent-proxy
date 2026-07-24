@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable, MutableMapping
 
 import structlog
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
@@ -77,6 +77,25 @@ def metrics_text() -> bytes:
     return generate_latest()
 
 
+def _add_trace_context(
+    _logger: Any, _method_name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """Add the active OTel trace and span ids without risking log delivery."""
+    try:
+        from opentelemetry import trace
+
+        span_context = trace.get_current_span().get_span_context()
+    except Exception:
+        return event_dict
+
+    if not span_context.is_valid:
+        return event_dict
+
+    event_dict["trace_id"] = f"{span_context.trace_id:032x}"
+    event_dict["span_id"] = f"{span_context.span_id:016x}"
+    return event_dict
+
+
 def _configure_structlog(log_level: str) -> None:
     """JSON logs to stdout, shared processor chain, level from settings."""
     level = getattr(logging, log_level.upper(), logging.INFO)
@@ -84,6 +103,7 @@ def _configure_structlog(log_level: str) -> None:
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
+            _add_trace_context,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
