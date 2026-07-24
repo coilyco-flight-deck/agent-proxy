@@ -1,0 +1,50 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e819d",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "artifact.created",
+  "occurred_at": "2026-07-23T05:30:34Z",
+  "observed_at": "2026-07-23T05:30:34Z",
+  "source": {
+    "name": "artifact-producer",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "redacted-artifact",
+  "correlation": {
+    "episode_id": "fixture-episode"
+  },
+  "actor": {
+    "type": "agent",
+    "id": "fixture-agent",
+    "role": "engineer"
+  },
+  "attributes": {
+    "service.name": "artifact-producer"
+  },
+  "payload": {
+    "artifact_ref": "artifact:redacted",
+    "artifact_kind": "tool-output",
+    "media_type": "application/json",
+    "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "size": 84,
+    "retention_class": "short",
+    "access_tier": "internal"
+  },
+  "content": {
+    "capture": "redacted_body",
+    "body_ref": "content:redacted",
+    "body_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "redaction": {
+      "status": "redacted",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [],
+    "input_refs": [],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}

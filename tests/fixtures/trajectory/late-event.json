@@ -1,0 +1,49 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e819a",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "observation.recorded",
+  "occurred_at": "2026-07-22T05:30:34Z",
+  "observed_at": "2026-07-23T05:30:34Z",
+  "source": {
+    "name": "late-producer",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "late-observation",
+  "correlation": {
+    "episode_id": "fixture-episode"
+  },
+  "actor": {
+    "type": "system",
+    "id": "fixture-observer",
+    "role": "observer"
+  },
+  "attributes": {
+    "service.name": "late-producer"
+  },
+  "payload": {
+    "observation_kind": "health",
+    "observation_ref": "observation:late",
+    "subject_ref": "service:fixture",
+    "measured_facts": {
+      "healthy": true
+    }
+  },
+  "content": {
+    "capture": "metadata_only",
+    "body_ref": "",
+    "body_sha256": "",
+    "redaction": {
+      "status": "not_captured",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [],
+    "input_refs": [],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}

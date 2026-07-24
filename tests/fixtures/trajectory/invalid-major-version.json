@@ -1,0 +1,44 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e819f",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "2.0",
+  "event_type": "policy.decided",
+  "occurred_at": "2026-07-23T05:30:34Z",
+  "observed_at": "2026-07-23T05:30:34Z",
+  "source": {
+    "name": "invalid-producer",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "invalid-major",
+  "correlation": {},
+  "actor": {
+    "type": "system",
+    "id": "fixture-policy",
+    "role": "policy"
+  },
+  "attributes": {},
+  "payload": {
+    "decision": "allow",
+    "policy_name": "fixture",
+    "policy_version": "v1",
+    "reason_code": "fixture",
+    "action_ref": "action:fixture"
+  },
+  "content": {
+    "capture": "metadata_only",
+    "body_ref": "",
+    "body_sha256": "",
+    "redaction": {
+      "status": "not_captured",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [],
+    "input_refs": [],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}

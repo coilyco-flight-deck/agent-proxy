@@ -180,3 +180,11 @@ Model-request, model-response, and execution events include `payload.model_execu
 - Consumers preserve unknown optional fields for forward compatibility.
 - Consumers never use trace, Ward, repository, or issue correlation as an authorization mechanism.
 - Contract fixtures must cover valid events, invalid events, duplicate delivery, late delivery, partial trajectories, replay, redacted bodies, and restricted bodies.
+
+## Executable package
+
+The contract is implemented by `app.trajectory`, exported for non-Python
+consumers as `schemas/trajectory-event-v1.schema.json`, and exercised by the
+shared fixtures under `tests/fixtures/trajectory/`. Compatibility and producer
+or consumer use are documented in
+[`trajectory-schema-package.md`](trajectory-schema-package.md).

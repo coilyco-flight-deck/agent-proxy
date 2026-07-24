@@ -1,0 +1,77 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e8198",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "execution.completed",
+  "occurred_at": "2026-07-23T05:30:34.123Z",
+  "observed_at": "2026-07-23T05:30:34.401Z",
+  "source": {
+    "name": "agent-proxy",
+    "version": "0.1.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "fixture-execution-completed",
+  "correlation": {
+    "trace_id": "fixture-trace",
+    "span_id": "fixture-span",
+    "ward_run_id": "fixture-run",
+    "episode_id": "fixture-episode",
+    "agent_session_id": "fixture-session",
+    "request_id": "fixture-request",
+    "repository": "example/repository",
+    "issue_ref": "example/repository#42",
+    "workflow": "direct-to-main"
+  },
+  "actor": {
+    "type": "agent",
+    "id": "fixture-agent",
+    "role": "engineer"
+  },
+  "attributes": {
+    "service.name": "agent-proxy",
+    "gen_ai.operation.name": "chat",
+    "gen_ai.request.model": "fixture-model",
+    "agentproxy.policy.decision": "allow"
+  },
+  "payload": {
+    "execution_id": "fixture-execution",
+    "executor_ref": "ward:fixture-run",
+    "action_ref": "action:fixture",
+    "outcome": "completed",
+    "after_state_ref": "state:after",
+    "model_execution": {
+      "model": "fixture-model",
+      "provider": "ollama",
+      "provider_model": "fixture-model",
+      "request_tokens": 1200,
+      "response_tokens": 340,
+      "total_tokens": 1540,
+      "latency_ms": 812,
+      "cost": {
+        "amount": "0.000000",
+        "currency": "USD",
+        "calculation_version": "gateway-cost-v1"
+      },
+      "retry_count": 1,
+      "fallback_count": 0,
+      "fallback_from": [],
+      "finish_reason": "stop"
+    }
+  },
+  "content": {
+    "capture": "metadata_only",
+    "body_ref": "",
+    "body_sha256": "",
+    "redaction": {
+      "status": "not_captured",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [],
+    "input_refs": [],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}

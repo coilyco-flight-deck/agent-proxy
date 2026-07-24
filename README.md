@@ -22,6 +22,7 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - Context-budget protection and a small self-verification detector for unsupported action claims.
 - Structured logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, Ward correlation metadata, and health endpoints.
 - Ward skill-use artifact parsing that emits structured events and Prometheus counts. It does not persist raw trajectory records.
+- An executable trajectory contract v1 package with producer and consumer validation, compatibility fixtures, and a JSON Schema for non-Python consumers.
 
 `docs/FEATURES.md` is the complete current inventory. Planned v2 components are deliberately marked planned there.
 

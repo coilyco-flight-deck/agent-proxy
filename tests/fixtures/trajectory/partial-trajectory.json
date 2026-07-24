@@ -1,0 +1,49 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e819b",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "action.proposed",
+  "occurred_at": "2026-07-23T05:30:34Z",
+  "observed_at": "2026-07-23T05:30:34Z",
+  "source": {
+    "name": "partial-producer",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "partial-action",
+  "correlation": {
+    "request_id": "fixture-request"
+  },
+  "actor": {
+    "type": "agent",
+    "id": "fixture-agent",
+    "role": "engineer"
+  },
+  "attributes": {
+    "service.name": "partial-producer"
+  },
+  "payload": {
+    "action_kind": "repository.read",
+    "action_ref": "action:partial",
+    "target_refs": [
+      "repo:example/repository"
+    ],
+    "intent": "inspect"
+  },
+  "content": {
+    "capture": "metadata_only",
+    "body_ref": "",
+    "body_sha256": "",
+    "redaction": {
+      "status": "not_captured",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [],
+    "input_refs": [],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "event_id": "018f6d1d-5e54-7c20-bf7e-5bd1ca1e8199",
+  "schema_name": "agentproxy.trajectory.event",
+  "schema_version": "1.0",
+  "event_type": "artifact.observed",
+  "occurred_at": "2026-07-23T05:31:00Z",
+  "observed_at": "2026-07-23T05:31:01Z",
+  "source": {
+    "name": "ward",
+    "version": "1.0.0",
+    "instance_id": "fixture-instance"
+  },
+  "idempotency_key": "ward-artifact-42",
+  "correlation": {
+    "ward_run_id": "fixture-run"
+  },
+  "actor": {
+    "type": "agent",
+    "id": "fixture-agent",
+    "role": "engineer"
+  },
+  "attributes": {
+    "service.name": "ward"
+  },
+  "payload": {
+    "artifact_ref": "artifact:fixture",
+    "artifact_kind": "test-report",
+    "media_type": "application/json",
+    "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 42,
+    "retention_class": "standard",
+    "access_tier": "internal"
+  },
+  "content": {
+    "capture": "metadata_only",
+    "body_ref": "",
+    "body_sha256": "",
+    "redaction": {
+      "status": "not_captured",
+      "policy_version": "v1"
+    }
+  },
+  "provenance": {
+    "producer_event_ids": [],
+    "input_refs": [],
+    "transform": "",
+    "transform_version": "",
+    "content_sha256": ""
+  }
+}

@@ -1,0 +1,1315 @@
+{
+  "$defs": {
+    "ActionProposedPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "action_kind": {
+          "minLength": 1,
+          "title": "Action Kind",
+          "type": "string"
+        },
+        "action_ref": {
+          "minLength": 1,
+          "title": "Action Ref",
+          "type": "string"
+        },
+        "before_state_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before State Ref"
+        },
+        "intent": {
+          "minLength": 1,
+          "title": "Intent",
+          "type": "string"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        },
+        "target_refs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Target Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "action_kind",
+        "action_ref",
+        "target_refs",
+        "intent"
+      ],
+      "title": "ActionProposedPayload",
+      "type": "object"
+    },
+    "Actor": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "type": {
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "role"
+      ],
+      "title": "Actor",
+      "type": "object"
+    },
+    "ActorObservedPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "actor_ref": {
+          "minLength": 1,
+          "title": "Actor Ref",
+          "type": "string"
+        },
+        "capability_claims": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capability Claims",
+          "type": "array"
+        },
+        "identity_source": {
+          "minLength": 1,
+          "title": "Identity Source",
+          "type": "string"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor_ref",
+        "identity_source",
+        "role"
+      ],
+      "title": "ActorObservedPayload",
+      "type": "object"
+    },
+    "ArtifactPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "minLength": 1,
+          "title": "Access Tier",
+          "type": "string"
+        },
+        "artifact_kind": {
+          "minLength": 1,
+          "title": "Artifact Kind",
+          "type": "string"
+        },
+        "artifact_ref": {
+          "minLength": 1,
+          "title": "Artifact Ref",
+          "type": "string"
+        },
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retention_class": {
+          "minLength": 1,
+          "title": "Retention Class",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "retention_class",
+        "access_tier",
+        "artifact_ref",
+        "artifact_kind",
+        "media_type",
+        "content_sha256",
+        "size"
+      ],
+      "title": "ArtifactPayload",
+      "type": "object"
+    },
+    "Content": {
+      "additionalProperties": true,
+      "properties": {
+        "body_ref": {
+          "default": "",
+          "title": "Body Ref",
+          "type": "string"
+        },
+        "body_sha256": {
+          "default": "",
+          "title": "Body Sha256",
+          "type": "string"
+        },
+        "capture": {
+          "enum": [
+            "metadata_only",
+            "redacted_body",
+            "restricted_body"
+          ],
+          "title": "Capture",
+          "type": "string"
+        },
+        "redaction": {
+          "$ref": "#/$defs/Redaction"
+        }
+      },
+      "required": [
+        "capture",
+        "redaction"
+      ],
+      "title": "Content",
+      "type": "object"
+    },
+    "Correlation": {
+      "additionalProperties": true,
+      "properties": {
+        "agent_session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Session Id"
+        },
+        "causation_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Causation Event Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "episode_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Id"
+        },
+        "issue_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issue Ref"
+        },
+        "parent_event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Event Id"
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository"
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Id"
+        },
+        "ward_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ward Run Id"
+        },
+        "workflow": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workflow"
+        }
+      },
+      "title": "Correlation",
+      "type": "object"
+    },
+    "Cost": {
+      "additionalProperties": true,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Amount"
+        },
+        "calculation_version": {
+          "minLength": 1,
+          "title": "Calculation Version",
+          "type": "string"
+        },
+        "currency": {
+          "maxLength": 3,
+          "minLength": 3,
+          "title": "Currency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "currency",
+        "calculation_version"
+      ],
+      "title": "Cost",
+      "type": "object"
+    },
+    "EvaluationRecordedPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "evaluation_id": {
+          "minLength": 1,
+          "title": "Evaluation Id",
+          "type": "string"
+        },
+        "evaluator_version": {
+          "minLength": 1,
+          "title": "Evaluator Version",
+          "type": "string"
+        },
+        "input_refs": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Input Refs",
+          "type": "array"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Label"
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "supersedes_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supersedes Ref"
+        }
+      },
+      "required": [
+        "evaluation_id",
+        "evaluator_version",
+        "input_refs",
+        "confidence"
+      ],
+      "title": "EvaluationRecordedPayload",
+      "type": "object"
+    },
+    "ExecutionPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "action_ref": {
+          "minLength": 1,
+          "title": "Action Ref",
+          "type": "string"
+        },
+        "after_state_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After State Ref"
+        },
+        "error_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Class"
+        },
+        "execution_id": {
+          "minLength": 1,
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "executor_ref": {
+          "minLength": 1,
+          "title": "Executor Ref",
+          "type": "string"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outcome": {
+          "minLength": 1,
+          "title": "Outcome",
+          "type": "string"
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        }
+      },
+      "required": [
+        "execution_id",
+        "executor_ref",
+        "action_ref",
+        "outcome"
+      ],
+      "title": "ExecutionPayload",
+      "type": "object"
+    },
+    "HumanIntervenedPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "actor_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actor Ref"
+        },
+        "affected_ref": {
+          "minLength": 1,
+          "title": "Affected Ref",
+          "type": "string"
+        },
+        "human_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Human Role"
+        },
+        "intervention_kind": {
+          "minLength": 1,
+          "title": "Intervention Kind",
+          "type": "string"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rationale_ref": {
+          "minLength": 1,
+          "title": "Rationale Ref",
+          "type": "string"
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        }
+      },
+      "required": [
+        "intervention_kind",
+        "rationale_ref",
+        "affected_ref"
+      ],
+      "title": "HumanIntervenedPayload",
+      "type": "object"
+    },
+    "ModelExecution": {
+      "additionalProperties": true,
+      "properties": {
+        "cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fallback_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Fallback Count",
+          "type": "integer"
+        },
+        "fallback_from": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fallback From",
+          "type": "array"
+        },
+        "finish_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finish Reason"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Ms"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "provider_model": {
+          "minLength": 1,
+          "title": "Provider Model",
+          "type": "string"
+        },
+        "request_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Tokens"
+        },
+        "response_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response Tokens"
+        },
+        "retry_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Retry Count",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        }
+      },
+      "required": [
+        "model",
+        "provider",
+        "provider_model"
+      ],
+      "title": "ModelExecution",
+      "type": "object"
+    },
+    "ObservationRecordedPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "measured_facts": {
+          "additionalProperties": true,
+          "title": "Measured Facts",
+          "type": "object"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "observation_kind": {
+          "minLength": 1,
+          "title": "Observation Kind",
+          "type": "string"
+        },
+        "observation_ref": {
+          "minLength": 1,
+          "title": "Observation Ref",
+          "type": "string"
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        },
+        "subject_ref": {
+          "minLength": 1,
+          "title": "Subject Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_kind",
+        "observation_ref",
+        "subject_ref",
+        "measured_facts"
+      ],
+      "title": "ObservationRecordedPayload",
+      "type": "object"
+    },
+    "PolicyDecidedPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "action_ref": {
+          "minLength": 1,
+          "title": "Action Ref",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "allow",
+            "deny",
+            "require_review",
+            "defer"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "policy_name": {
+          "minLength": 1,
+          "title": "Policy Name",
+          "type": "string"
+        },
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        }
+      },
+      "required": [
+        "decision",
+        "policy_name",
+        "policy_version",
+        "reason_code",
+        "action_ref"
+      ],
+      "title": "PolicyDecidedPayload",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": true,
+      "properties": {
+        "content_sha256": {
+          "default": "",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "input_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Input Refs",
+          "type": "array"
+        },
+        "producer_event_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Producer Event Ids",
+          "type": "array"
+        },
+        "transform": {
+          "default": "",
+          "title": "Transform",
+          "type": "string"
+        },
+        "transform_version": {
+          "default": "",
+          "title": "Transform Version",
+          "type": "string"
+        }
+      },
+      "title": "Provenance",
+      "type": "object"
+    },
+    "Redaction": {
+      "additionalProperties": true,
+      "properties": {
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "not_captured",
+            "redacted",
+            "restricted",
+            "withheld"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "policy_version"
+      ],
+      "title": "Redaction",
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": true,
+      "properties": {
+        "instance_id": {
+          "minLength": 1,
+          "title": "Instance Id",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "instance_id"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "StateChangedPayload": {
+      "additionalProperties": true,
+      "properties": {
+        "access_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Tier"
+        },
+        "action_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action Ref"
+        },
+        "after_state_ref": {
+          "minLength": 1,
+          "title": "After State Ref",
+          "type": "string"
+        },
+        "before_state_ref": {
+          "minLength": 1,
+          "title": "Before State Ref",
+          "type": "string"
+        },
+        "change_kind": {
+          "minLength": 1,
+          "title": "Change Kind",
+          "type": "string"
+        },
+        "execution_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Ref"
+        },
+        "model_execution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelExecution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retention_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Class"
+        }
+      },
+      "required": [
+        "before_state_ref",
+        "after_state_ref",
+        "change_kind"
+      ],
+      "title": "StateChangedPayload",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "The canonical ``agentproxy.trajectory.event`` v1 envelope.",
+  "properties": {
+    "actor": {
+      "$ref": "#/$defs/Actor"
+    },
+    "attributes": {
+      "additionalProperties": true,
+      "title": "Attributes",
+      "type": "object"
+    },
+    "content": {
+      "$ref": "#/$defs/Content"
+    },
+    "correlation": {
+      "$ref": "#/$defs/Correlation"
+    },
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "enum": [
+        "actor.observed",
+        "action.proposed",
+        "policy.decided",
+        "execution.started",
+        "execution.completed",
+        "execution.failed",
+        "observation.recorded",
+        "state.changed",
+        "evaluation.recorded",
+        "human.intervened",
+        "artifact.created",
+        "artifact.observed"
+      ],
+      "title": "Event Type",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "payload": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActorObservedPayload"
+        },
+        {
+          "$ref": "#/$defs/ActionProposedPayload"
+        },
+        {
+          "$ref": "#/$defs/PolicyDecidedPayload"
+        },
+        {
+          "$ref": "#/$defs/ExecutionPayload"
+        },
+        {
+          "$ref": "#/$defs/ObservationRecordedPayload"
+        },
+        {
+          "$ref": "#/$defs/StateChangedPayload"
+        },
+        {
+          "$ref": "#/$defs/EvaluationRecordedPayload"
+        },
+        {
+          "$ref": "#/$defs/HumanIntervenedPayload"
+        },
+        {
+          "$ref": "#/$defs/ArtifactPayload"
+        }
+      ],
+      "title": "Payload"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "schema_name": {
+      "const": "agentproxy.trajectory.event",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/Source"
+    }
+  },
+  "required": [
+    "event_id",
+    "schema_name",
+    "schema_version",
+    "event_type",
+    "occurred_at",
+    "observed_at",
+    "source",
+    "idempotency_key",
+    "correlation",
+    "actor",
+    "attributes",
+    "payload",
+    "content",
+    "provenance"
+  ],
+  "title": "TrajectoryEvent",
+  "type": "object"
+}

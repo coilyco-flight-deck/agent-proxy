@@ -14,14 +14,29 @@
 
 commands:
   test:
-    run: ./scripts/test.sh
+    run: uv run --extra dev pytest
     description: Sync dev deps and run the unit test suite (tower not required).
+  format-check:
+    run: uv run --extra dev black --check .
+    description: Check Python formatting.
+  format:
+    run: uv run --extra dev black .
+    description: Format Python sources.
+  lint:
+    run: uv run --extra dev ruff check .
+    description: Run the Python linter.
+  typecheck:
+    run: uv run --extra dev mypy app
+    description: Run the Python type checker.
   serve:
     run: uv run uvicorn app.main:app --port 8080
     description: Serve the proxy on 127.0.0.1:8080.
   sync:
     run: uv run uv sync
     description: Sync the app + dev dependencies.
+  schema:
+    run: uv run python scripts/export_trajectory_schema.py
+    description: Regenerate the committed trajectory contract JSON Schema.
 
   # Container acceptance tests (agent-proxy#24). test-container builds the image
   # and asserts it boots + serves /healthz + /v1/models + /metrics (needs a
