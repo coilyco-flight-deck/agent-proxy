@@ -31,6 +31,8 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - A machine-readable standalone-versus-SDK LiteLLM decision and executable endpoint parity runner. LiteLLM runtime integration has not landed.
 - Cold-path agent-compose bundle ingestion that retains role, selected-skill,
   artifact, and decision evidence without copying the opaque context tree.
+- Cold-path cli-guard audit and specgen policy ingestion that links guarded
+  actions, decisions, execution outcomes, and content-addressed policy evidence.
 
 `docs/FEATURES.md` is the complete current inventory. Planned v2 components are deliberately marked planned there.
 

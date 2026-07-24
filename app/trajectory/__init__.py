@@ -47,6 +47,12 @@ from app.trajectory.agent_compose import (
     events_from_agent_compose_bundle,
     ingest_agent_compose_bundle,
 )
+from app.trajectory.guard import (
+    SpecgenSnapshot,
+    events_from_cli_guard_audit,
+    ingest_guard_data,
+    specgen_policy_snapshot,
+)
 
 __all__ = [
     "CURRENT_SCHEMA_NAME",
@@ -79,6 +85,10 @@ __all__ = [
     "query_contracts",
     "events_from_agent_compose_bundle",
     "ingest_agent_compose_bundle",
+    "SpecgenSnapshot",
+    "events_from_cli_guard_audit",
+    "ingest_guard_data",
+    "specgen_policy_snapshot",
     "canonical_event_bytes",
     "event_json_schema",
     "validate_event",

@@ -26,6 +26,10 @@ Status legend:
   immutable manifest and public-safe decision trace into actor, artifact, and
   observation events without copying the opaque context tree or granting
   execution authority. See [agent-compose-ingestion.md](agent-compose-ingestion.md).
+- **Guard trajectory ingestion** - landed - cold-path adapters map cli-guard
+  audit rows into action, policy, and execution events, and hash specgen
+  guardfiles and locks into linked policy evidence without retaining sensitive
+  argv, diagnostics, paths, or hosts. See [guard-ingestion.md](guard-ingestion.md).
 - **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
 
 ## Planned architecture v2
