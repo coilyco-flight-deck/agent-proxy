@@ -16,12 +16,12 @@ Status legend:
 - **Ward correlation** - landed - request, Ward run, workflow, repository, issue, and agent-session metadata joins in logs and spans.
 - **Skill-use artifact observation** - landed - ward reap `skill-usage.json` parsing, normalization, structured event logging, and the `ward_skill_use_total` Prometheus counter. This is not durable trajectory retention.
 - **Versioned trajectory schema package** - landed - Pydantic producer and consumer validation, stable canonical serialization, compatibility fixtures, and a committed JSON Schema implement contract v1. This does not yet provide durable ingestion.
+- **Append-only trajectory retention** - landed - an internal cold-path API validates and idempotently commits raw contract-v1 envelopes to SQLite, retains duplicate and quarantine receipts, blocks mutation with database triggers, and replays into fresh consumers. A bounded emitter keeps storage waits off the model hot path.
 - **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
 
 ## Planned architecture v2
 
 - **LiteLLM commodity gateway integration** - planned - provider integration, routing, retries, fallbacks, keys, budgets, and cost accounting move behind a parity-proven LiteLLM boundary. See [#41](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41).
-- **Durable append-only raw ingestion and replay** - planned - the existing event signals become replayable retained evidence. See [#43](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/43).
 - **Episode and trajectory materialization** - planned - assemble raw correlated events, including partial and late records. See [#44](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/44).
 - **Evaluation and annotation joins** - planned - evaluator, verifier, and human intervention records. See [#45](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/45).
 - **Versioned dataset exports** - planned - SFT, preference, verifier, reward, and held-out-evaluation datasets with provenance. See [#46](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/46).
@@ -32,5 +32,6 @@ Status legend:
 - [`architecture-v2.md`](architecture-v2.md) states ownership boundaries and the migration inventory.
 - [`trajectory-contract-v1.md`](trajectory-contract-v1.md) specifies the event contract.
 - [`trajectory-schema-package.md`](trajectory-schema-package.md) documents package compatibility and producer or consumer use.
+- [`trajectory-retention.md`](trajectory-retention.md) documents intake, raw retention, replay, and recovery.
 - [`ROADMAP.md`](ROADMAP.md) and [`work-graph.md`](work-graph.md) define execution order.
 - [`proxy.md`](proxy.md) remains the detailed guide to the currently landed reliability behavior.

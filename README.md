@@ -23,6 +23,7 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - Structured logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, Ward correlation metadata, and health endpoints.
 - Ward skill-use artifact parsing that emits structured events and Prometheus counts. It does not persist raw trajectory records.
 - An executable trajectory contract v1 package with producer and consumer validation, compatibility fixtures, and a JSON Schema for non-Python consumers.
+- Append-only SQLite trajectory ingestion with idempotent receipts, quarantine, replay, and a bounded asynchronous hot-path emitter.
 
 `docs/FEATURES.md` is the complete current inventory. Planned v2 components are deliberately marked planned there.
 
@@ -72,5 +73,6 @@ The proxy uses port 8080 by default. Set `PROXY_HOST`, `PROXY_PORT`, or `LOG_LEV
 
 - [`docs/architecture-v2.md`](docs/architecture-v2.md) defines the target stack, data boundaries, privacy model, and current-code migration inventory.
 - [`docs/trajectory-contract-v1.md`](docs/trajectory-contract-v1.md) defines the versioned event envelope and delivery semantics.
+- [`docs/trajectory-retention.md`](docs/trajectory-retention.md) defines durable intake, append-only storage, replay, and recovery.
 - [`docs/work-graph.md`](docs/work-graph.md) links the new dependency-ordered implementation issues.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) explains sequencing without treating future capabilities as prohibited work.

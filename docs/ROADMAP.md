@@ -21,7 +21,7 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
    - Establish the shared contract independently of the chosen retention system.
 3. [#43 Append-only ingestion and replayable raw retention](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/43)
    - Depends on #42.
-   - Add durable, replayable raw evidence outside the hot path.
+   - Landed: SQLite WAL retention, immutable receipt and quarantine ledgers, replay, and a bounded asynchronous emitter provide durable evidence outside the hot path.
 4. [#44 Episode and trajectory materialization](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/44)
    - Depends on #42 and #43.
    - Join events with deterministic handling of partial and late data.

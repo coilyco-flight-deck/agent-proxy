@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # ``skill-usage.json`` artifact or a directory of reaped run archives.
     ward_skill_use_input: str = Field(default="")
 
+    # Cold-path trajectory retention. The default is a file-backed SQLite WAL
+    # under the service working directory. Deployments mount this path on durable
+    # storage instead of treating the container layer as retention.
+    trajectory_db_path: str = Field(default="./data/trajectory.sqlite3")
+    trajectory_ingest_queue_size: int = Field(default=256, ge=1)
+
     # Tower resolution. If PROXY_TOWER_BASE_URL is set it wins outright; else the
     # FQDN resolves from SSM at boot and the base URL is built from it.
     tower_base_url: str = Field(default="")

@@ -10,7 +10,7 @@ The issues below are fresh implementation work for Agent Proxy architecture v2. 
    - Implements the shared contract in [`trajectory-contract-v1.md`](trajectory-contract-v1.md).
 3. [#43 Append-only ingestion and replayable raw retention](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/43)
    - Depends on #42.
-   - Establishes durable, replayable evidence without using SigNoz as the sole store.
+   - Landed: establishes durable, replayable SQLite evidence without using SigNoz as the sole store.
 4. [#44 Episode and trajectory materialization](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/44)
    - Depends on #42 and #43.
    - Builds deterministic, re-materializable correlated trajectories.

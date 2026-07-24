@@ -40,6 +40,7 @@ from .obs import (
 )
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed, ContextTruncated
+from .trajectory.api import router as trajectory_router
 
 # obs is wired at import (app.obs runs setup_observability at module load).
 
@@ -88,6 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="agent-proxy", lifespan=lifespan)
+app.include_router(trajectory_router)
 
 
 # --------------------------------------------------------------------------- #
