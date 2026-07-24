@@ -7,6 +7,7 @@ import json
 import sqlite3
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,17 @@ class MaterializedTrajectory(BaseModel):
     event_type_counts: dict[str, int]
     retry_count: int = Field(ge=0)
     fallback_count: int = Field(ge=0)
+    model_request_count: int = Field(ge=0)
+    request_tokens: int = Field(ge=0)
+    response_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    latency_ms: int = Field(ge=0)
+    cost_by_currency: dict[str, str]
+    policy_decisions: dict[str, int]
+    models: tuple[str, ...]
+    providers: tuple[str, ...]
+    harnesses: tuple[str, ...]
+    actor_roles: tuple[str, ...]
     human_intervention_count: int = Field(ge=0)
     access_tier: str
     content_sha256: str
@@ -198,13 +210,44 @@ class TrajectoryMaterializer:
 
         retry_count = 0
         fallback_count = 0
+        model_request_count = 0
+        request_tokens = 0
+        response_tokens = 0
+        total_tokens = 0
+        latency_ms = 0
+        costs: dict[str, Decimal] = {}
+        policy_decisions: Counter[str] = Counter()
+        models: set[str] = set()
+        providers: set[str] = set()
+        harnesses: set[str] = set()
+        actor_roles: set[str] = set()
         access_tier = "internal"
         for event in events:
+            actor_roles.add(event.actor.role)
+            harness = event.attributes.get("ward.harness") or event.attributes.get(
+                "agentproxy.harness"
+            )
+            if isinstance(harness, str) and harness:
+                harnesses.add(harness)
             model_execution = event.payload.model_execution
             if model_execution is not None:
+                model_request_count += 1
                 retry_count += model_execution.retry_count
                 fallback_count += model_execution.fallback_count
+                request_tokens += model_execution.request_tokens or 0
+                response_tokens += model_execution.response_tokens or 0
+                total_tokens += model_execution.total_tokens or 0
+                latency_ms += model_execution.latency_ms or 0
+                models.add(model_execution.model)
+                providers.add(model_execution.provider)
+                if model_execution.cost is not None:
+                    currency = model_execution.cost.currency
+                    costs[currency] = costs.get(currency, Decimal(0)) + model_execution.cost.amount
             payload = event.payload.model_dump(mode="json", exclude_none=True)
+            if event.event_type == "policy.decided":
+                decision = payload.get("decision")
+                if isinstance(decision, str):
+                    policy_decisions[decision] += 1
             event_access = str(payload.get("access_tier") or "internal")
             if event.content.capture == "restricted_body" or event_access == "restricted":
                 access_tier = "restricted"
@@ -221,6 +264,19 @@ class TrajectoryMaterializer:
             event_type_counts=dict(sorted(event_types.items())),
             retry_count=retry_count,
             fallback_count=fallback_count,
+            model_request_count=model_request_count,
+            request_tokens=request_tokens,
+            response_tokens=response_tokens,
+            total_tokens=total_tokens,
+            latency_ms=latency_ms,
+            cost_by_currency={
+                currency: format(amount, "f") for currency, amount in sorted(costs.items())
+            },
+            policy_decisions=dict(sorted(policy_decisions.items())),
+            models=tuple(sorted(models)),
+            providers=tuple(sorted(providers)),
+            harnesses=tuple(sorted(harnesses)),
+            actor_roles=tuple(sorted(actor_roles)),
             human_intervention_count=event_types["human.intervened"],
             access_tier=access_tier,
             content_sha256="",
@@ -354,6 +410,25 @@ class MaterializationStore:
                 """,
                 (trajectory_id,),
             ).fetchall()
+        return tuple(
+            MaterializedTrajectory.model_validate_json(bytes(row["record"])) for row in rows
+        )
+
+    def latest_all(self) -> tuple[MaterializedTrajectory, ...]:
+        self.initialize()
+        with self._connect() as connection:
+            rows = connection.execute("""
+                SELECT materialized.record
+                FROM trajectory_materializations AS materialized
+                INNER JOIN (
+                    SELECT trajectory_id, MAX(revision) AS revision
+                    FROM trajectory_materializations
+                    GROUP BY trajectory_id
+                ) AS latest
+                ON latest.trajectory_id = materialized.trajectory_id
+                AND latest.revision = materialized.revision
+                ORDER BY materialized.trajectory_id
+                """).fetchall()
         return tuple(
             MaterializedTrajectory.model_validate_json(bytes(row["record"])) for row in rows
         )

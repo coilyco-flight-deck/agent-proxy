@@ -29,6 +29,14 @@ from app.trajectory.datasets import (
     RedactionPolicy,
     SplitPolicy,
 )
+from app.trajectory.views import (
+    AccessPolicy,
+    OperationalView,
+    OperationalViewBuilder,
+    QueryContract,
+    WardDossierInput,
+    query_contracts,
+)
 from app.trajectory.store import (
     AsyncTrajectoryEmitter,
     IngestResult,
@@ -59,6 +67,12 @@ __all__ = [
     "DatasetManifest",
     "RedactionPolicy",
     "SplitPolicy",
+    "AccessPolicy",
+    "OperationalView",
+    "OperationalViewBuilder",
+    "QueryContract",
+    "WardDossierInput",
+    "query_contracts",
     "canonical_event_bytes",
     "event_json_schema",
     "validate_event",

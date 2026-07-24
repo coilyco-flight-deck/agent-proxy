@@ -22,6 +22,6 @@ The issues below are fresh implementation work for Agent Proxy architecture v2. 
    - Landed: produces reproducible SFT, preference, verifier, reward, and held-out evaluation manifests.
 7. [#47 Operational queries, Ward dossier inputs, and harness-fit views](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/47)
    - Depends on #43, #44, and #45.
-   - Produces governed evidence views while keeping Ward as the authority.
+   - Landed: produces governed evidence views while keeping Ward as the authority.
 
 Each issue contains its own explicit acceptance criteria. #41 and #42 can proceed in parallel. #43 follows the schema package, and the remaining data-plane work follows the listed dependencies.

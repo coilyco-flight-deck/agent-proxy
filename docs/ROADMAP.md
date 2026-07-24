@@ -33,7 +33,7 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
    - Landed: reproducible SFT, preference, verifier, reward, and held-out evaluation artifacts use write-once provenance manifests and trajectory-level splits.
 7. [#47 Operational queries, Ward dossier inputs, and harness-fit views](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/47)
    - Depends on #43, #44, and #45.
-   - Turn retained evidence into controlled operational views and Ward dossier inputs.
+   - Landed: exposes governed operational evidence, OTLP joins, harness-fit comparisons, and evidence-only dossier inputs without moving authority out of Ward.
 
 ## Delivery rules
 

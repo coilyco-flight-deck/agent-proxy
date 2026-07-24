@@ -363,3 +363,11 @@ class EvaluationStore:
                 (trajectory_id,),
             ).fetchall()
         return tuple(EvaluationRecord.model_validate_json(bytes(row["record"])) for row in rows)
+
+    def all(self) -> tuple[EvaluationRecord, ...]:
+        self.initialize()
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT record FROM evaluation_records ORDER BY trajectory_id, sequence"
+            ).fetchall()
+        return tuple(EvaluationRecord.model_validate_json(bytes(row["record"])) for row in rows)

@@ -20,13 +20,12 @@ Status legend:
 - **Episode and trajectory materialization** - landed - deterministic connected-component assembly preserves every correlation dimension, orders events, exposes partial and late state, records retries, fallbacks, and human interventions, and appends content-hashed derived revisions.
 - **Evaluation and annotation records** - landed - automatic evaluations, verifiers, human annotations, and interventions join to stable trajectories with immutable evidence, supersession, disagreement, late-arrival, replay, redaction, and access-tier semantics.
 - **Versioned dataset exports** - landed - SFT, preference, verifier, reward, and held-out evaluation schemas produce write-once manifests with source provenance, content hashes, deterministic trajectory-level splits, reproducibility, and opt-in restricted body references.
+- **Operational and governance views** - landed - internal reliability, cost and latency, policy, evaluation, and harness-fit query contracts join durable trajectories to OTLP context, enforce access tiers, publish freshness and reconstruction limits, and provide evidence-only Ward dossier inputs.
 - **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
 
 ## Planned architecture v2
 
 - **LiteLLM commodity gateway integration** - planned - provider integration, routing, retries, fallbacks, keys, budgets, and cost accounting move behind a parity-proven LiteLLM boundary. See [#41](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/41).
-- **Operational and governance views** - planned - controlled operational queries, Ward dossier inputs, and harness-fit comparisons. See [#47](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/47).
-
 ## References
 
 - [`architecture-v2.md`](architecture-v2.md) states ownership boundaries and the migration inventory.
@@ -36,5 +35,6 @@ Status legend:
 - [`trajectory-materialization.md`](trajectory-materialization.md) documents deterministic assembly and re-materialization.
 - [`evaluation-records.md`](evaluation-records.md) documents evaluation, annotation, and intervention evidence.
 - [`dataset-exports.md`](dataset-exports.md) documents schemas, manifests, split safety, and reproducibility.
+- [`operational-views.md`](operational-views.md) documents queries, dossiers, access, freshness, and backfill.
 - [`ROADMAP.md`](ROADMAP.md) and [`work-graph.md`](work-graph.md) define execution order.
 - [`proxy.md`](proxy.md) remains the detailed guide to the currently landed reliability behavior.

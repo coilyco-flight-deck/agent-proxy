@@ -27,6 +27,7 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - Deterministic cold-path episode and trajectory reconstruction with explicit partial and late status, source-event provenance, content hashes, and append-only revisions.
 - Immutable evaluation, verifier, human annotation, and intervention records with supersession, disagreement, late-arrival, privacy, and replay semantics.
 - Reproducible SFT, preference, verifier, reward, and held-out evaluation exports with write-once manifests and trajectory-level leakage prevention.
+- Governed reliability, cost and latency, policy, evaluation, and harness-fit views with OTLP joins, freshness metadata, and evidence-only Ward dossier inputs.
 
 `docs/FEATURES.md` is the complete current inventory. Planned v2 components are deliberately marked planned there.
 
@@ -80,5 +81,6 @@ The proxy uses port 8080 by default. Set `PROXY_HOST`, `PROXY_PORT`, or `LOG_LEV
 - [`docs/trajectory-materialization.md`](docs/trajectory-materialization.md) defines correlation, ordering, watermarks, and derived revisions.
 - [`docs/evaluation-records.md`](docs/evaluation-records.md) defines evaluator, annotation, supersession, and disagreement evidence.
 - [`docs/dataset-exports.md`](docs/dataset-exports.md) defines export schemas, manifests, splits, reproducibility, and privacy.
+- [`docs/operational-views.md`](docs/operational-views.md) defines query contracts, Ward dossier boundaries, access, and freshness.
 - [`docs/work-graph.md`](docs/work-graph.md) links the new dependency-ordered implementation issues.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) explains sequencing without treating future capabilities as prohibited work.
