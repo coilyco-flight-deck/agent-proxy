@@ -21,6 +21,9 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from prometheus_client import CONTENT_TYPE_LATEST
 
 from . import resilience, upstream
@@ -64,6 +67,23 @@ _TRACE_METADATA_FIELDS: dict[str, tuple[str, ...]] = {
 
 _trajectory_emitter: AsyncTrajectoryEmitter | None = None
 
+_settings = get_settings()
+mcp_server = FastMCP(
+    name="agent-proxy",
+    instructions=(
+        "Use list_models to discover the local inference catalog, then use "
+        "send_prompt to submit one non-streaming prompt through Agent Proxy."
+    ),
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_settings.resolved_mcp_allowed_hosts(),
+        allowed_origins=_settings.resolved_mcp_allowed_origins(),
+    ),
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -83,29 +103,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         pass
 
-    trajectory_store = TrajectoryStore(settings.trajectory_db_path)
-    if settings.trajectory_request_emission_enabled:
-        _trajectory_emitter = AsyncTrajectoryEmitter(
+    async with mcp_server.session_manager.run():
+        trajectory_store = TrajectoryStore(settings.trajectory_db_path)
+        if settings.trajectory_request_emission_enabled:
+            _trajectory_emitter = AsyncTrajectoryEmitter(
+                trajectory_store,
+                maxsize=settings.trajectory_ingest_queue_size,
+            )
+            await _trajectory_emitter.start()
+        await get_queue().start()
+        ingest_skill_use_source(
+            settings.ward_skill_use_input,
             trajectory_store,
-            maxsize=settings.trajectory_ingest_queue_size,
         )
-        await _trajectory_emitter.start()
-    await get_queue().start()
-    ingest_skill_use_source(
-        settings.ward_skill_use_input,
-        trajectory_store,
-    )
-    # Tags are read live from the backend's /api/tags on first request, not at
-    # boot - the tower need not be reachable for the proxy to start.
-    log.info("startup.complete")
-    try:
-        yield
-    finally:
-        await get_queue().stop()
-        if _trajectory_emitter is not None:
-            await _trajectory_emitter.stop()
-            _trajectory_emitter = None
-        await upstream.aclose()
+        # Tags are read live from the backend's /api/tags on first request, not at
+        # boot - the tower need not be reachable for the proxy to start.
+        log.info("startup.complete")
+        try:
+            yield
+        finally:
+            await get_queue().stop()
+            if _trajectory_emitter is not None:
+                await _trajectory_emitter.stop()
+                _trajectory_emitter = None
+            await upstream.aclose()
 
 
 app = FastAPI(title="agent-proxy", lifespan=lifespan)
@@ -397,11 +418,17 @@ async def chat_completions(request: Request) -> Response:
         body = await request.json()
     except Exception:
         return _error(400, "invalid JSON body", "invalid_request_error")
+    if not isinstance(body, dict):
+        return _error(400, "JSON body must be an object", "invalid_request_error")
+    return await _chat_completions(body, request.headers)
 
-    model_name = body.get("model")
+
+async def _chat_completions(body: dict[str, Any], headers) -> Response:
+    requested_model = body.get("model")
+    model_name = requested_model if isinstance(requested_model, str) else ""
     model = await resolve(model_name) if model_name else None
     if model is None:
-        return _error(404, f"unknown model '{model_name}'", "model_not_found")
+        return _error(404, f"unknown model '{requested_model}'", "model_not_found")
 
     messages = body.get("messages") or []
     tools = body.get("tools")
@@ -414,7 +441,7 @@ async def chat_completions(request: Request) -> Response:
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
     trace_extra = _request_trace_extra(
-        request.headers,
+        headers,
         body.get("metadata"),
         body_extra=(
             {
@@ -427,7 +454,7 @@ async def chat_completions(request: Request) -> Response:
         ),
     )
     request_id = (
-        request.headers.get("x-request-id", "")
+        headers.get("x-request-id", "")
         or str(trace_extra.get("agentproxy.request_id", ""))
         or str(uuid.uuid4())
     )
@@ -525,6 +552,58 @@ async def chat_completions(request: Request) -> Response:
         outcome="ok",
     )
     return JSONResponse(content=_chat_completion_response(model.name, result))
+
+
+@mcp_server.tool(name="list_models")
+async def mcp_list_models() -> dict[str, list[str]]:
+    """List model names currently available through Agent Proxy."""
+
+    return {"models": await list_tags()}
+
+
+@mcp_server.tool(name="send_prompt")
+async def mcp_send_prompt(
+    prompt: str,
+    model: str,
+    system_prompt: str = "",
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    """Send one prompt through Agent Proxy's policy and reliability path."""
+
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "metadata": {"ward.harness": "mcp"},
+    }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+    if temperature is not None:
+        body["temperature"] = temperature
+
+    response = await _chat_completions(body, {})
+    payload = json.loads(bytes(response.body))
+    if response.status_code >= 400:
+        error = payload.get("error", {})
+        raise ToolError(str(error.get("message", "Agent Proxy request failed")))
+
+    choice = payload["choices"][0]
+    message = choice["message"]
+    return {
+        "model": payload["model"],
+        "content": message.get("content"),
+        "reasoning_content": message.get("reasoning_content", ""),
+        "tool_calls": message.get("tool_calls", []),
+        "finish_reason": choice.get("finish_reason"),
+        "usage": payload.get("usage", {}),
+    }
+
+
+app.mount("/mcp", mcp_server.streamable_http_app())
 
 
 @app.post("/v1/completions")

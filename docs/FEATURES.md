@@ -10,6 +10,10 @@ Status legend:
 ## Landed reliability collection tap
 
 - **OpenAI-compatible request surface** - landed - `/v1/chat/completions`, `/v1/completions`, and `/v1/models`, including streaming and normalized reasoning content.
+- **Remote MCP prompt surface** - landed - stateless Streamable HTTP at `/mcp`
+  exposes model discovery and non-streaming prompt tools through the existing
+  Agent Proxy policy, reliability, telemetry, and trajectory path. See
+  [mcp.md](mcp.md).
 - **Real-tag context safety** - landed - backend catalog discovery, safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
 - **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.
 - **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, request spans, and opt-in trace-body capture.

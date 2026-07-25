@@ -32,6 +32,7 @@ dependencies = [
     "structlog>=24.0.0",
     "prometheus-client>=0.20.0",
     "tiktoken>=0.7.0",
+    "mcp>=1.27,<2",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +50,9 @@ agent-proxy = "app.main:main"
 
 [project.urls]
 "Homepage" = "https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 # The async test cases (queue worker, upstream dispatch, resilience loop) use

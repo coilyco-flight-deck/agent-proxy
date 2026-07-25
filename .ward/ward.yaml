@@ -55,17 +55,17 @@ commands:
   # Docker daemon). boot-probe validates the same boot path against the frozen
   # runtime deps with no daemon - the check that runs in a daemonless container.
   test-container:
-    run: ./test-container.sh
+    run: bash ./test-container.sh
     description: Build the image and assert it boots + serves the three endpoints (needs a Docker daemon).
   boot-probe:
-    run: ./boot_probe.sh
+    run: bash ./boot_probe.sh
     description: Daemonless boot probe against the frozen runtime deps.
 
   # Daemonless import/build smoke (agent-proxy#31): asserts the runtime deps are
   # a proper PEP 621 array, every runtime dep is locked, and the app imports
   # clean under runtime-only deps. No daemon, no tower - the CI gate runs it too.
   smoke:
-    run: ./test-fixes.sh
+    run: bash ./test-fixes.sh
     description: Daemonless import/build smoke (runtime deps locked, app imports clean).
 
   # Prove the 32k truncation cliff is gone through the proxy (leg 04 local

@@ -17,6 +17,8 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 ## Implemented today
 
 - An OpenAI-compatible `/v1/chat/completions`, `/v1/completions`, and `/v1/models` surface over the current gateway implementation.
+- A stateless Streamable HTTP MCP surface at `/mcp` with model discovery and
+  prompt tools backed by the same policy, reliability, and evidence path.
 - Real-tag model discovery and safe Ollama context-window derivation with `num_ctx` injection and delivered-context verification.
 - A bounded in-memory worker queue, response validation, retry, fallback, and per-backend circuit breaking.
 - Context-budget protection and a small self-verification detector for unsupported action claims.
@@ -68,6 +70,11 @@ ward exec test-container
 ```
 
 The proxy uses port 8080 by default. Set `PROXY_HOST`, `PROXY_PORT`, or `LOG_LEVEL` to override its host, port, or log level.
+
+The MCP endpoint and remote connector setup are documented in
+[`docs/mcp.md`](docs/mcp.md). A deployment must allowlist its public hostname
+with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
+`/mcp` before making it internet-reachable.
 
 ## Container validation
 

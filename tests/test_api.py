@@ -4,10 +4,8 @@ these run without the tower."""
 import json
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import models, resilience, upstream
-from app.main import app
 from app.upstream import UpstreamResult
 
 # The tags the fake backend advertises (issue #32: real ollama tags pass through).
@@ -15,7 +13,7 @@ CATALOG: dict[str, int | None] = {"qwen3:4b": 262144, "qwen3:8b": 40960}
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, app_client):
     async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
         return UpstreamResult(
             model=backend.ollama_tag,
@@ -30,8 +28,7 @@ def client(monkeypatch):
     monkeypatch.setattr(upstream, "chat", fake_chat)
     monkeypatch.setattr(models, "_catalog", fake_catalog)
     models.reset_catalog()
-    with TestClient(app) as c:
-        yield c
+    yield app_client
 
 
 class _Span:
@@ -82,6 +79,104 @@ def test_list_models(client):
     data = client.get("/v1/models").json()
     ids = {m["id"] for m in data["data"]}
     assert ids == {"qwen3:4b", "qwen3:8b"}
+
+
+def _mcp_post(client, method, params=None, request_id=1):
+    body = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        body["params"] = params
+    return client.post(
+        "/mcp",
+        headers={"Accept": "application/json, text/event-stream"},
+        json=body,
+    )
+
+
+def test_mcp_streamable_http_lists_tools_and_models(client):
+    initialized = _mcp_post(
+        client,
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "test-client", "version": "1.0"},
+        },
+    )
+    assert initialized.status_code == 200
+    assert initialized.json()["result"]["serverInfo"]["name"] == "agent-proxy"
+
+    tools = _mcp_post(client, "tools/list", request_id=2)
+    assert tools.status_code == 200
+    assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
+        "list_models",
+        "send_prompt",
+    }
+
+    models_result = _mcp_post(
+        client,
+        "tools/call",
+        {"name": "list_models", "arguments": {}},
+        request_id=3,
+    )
+    assert models_result.status_code == 200
+    assert set(models_result.json()["result"]["structuredContent"]["models"]) == set(CATALOG)
+
+
+def test_mcp_send_prompt_uses_chat_completion_path(client):
+    response = _mcp_post(
+        client,
+        "tools/call",
+        {
+            "name": "send_prompt",
+            "arguments": {
+                "prompt": "capital of France?",
+                "model": "qwen3:4b",
+                "system_prompt": "Answer briefly.",
+            },
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"] == {
+        "model": "qwen3:4b",
+        "content": "Paris",
+        "reasoning_content": "",
+        "tool_calls": [],
+        "finish_reason": "stop",
+        "usage": {
+            "prompt_tokens": 42,
+            "completion_tokens": 3,
+            "total_tokens": 45,
+        },
+    }
+
+
+def test_mcp_send_prompt_returns_tool_error_for_unknown_model(client):
+    response = _mcp_post(
+        client,
+        "tools/call",
+        {
+            "name": "send_prompt",
+            "arguments": {"prompt": "hello", "model": "nope"},
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert "unknown model" in result["content"][0]["text"]
+
+
+def test_mcp_rejects_untrusted_origin(client):
+    response = client.post(
+        "/mcp",
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "Origin": "https://untrusted.example",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+    )
+    assert response.status_code == 403
 
 
 def test_chat_completion_openai_shape(client):
@@ -178,7 +273,7 @@ def test_chat_completion_offers_metadata_trajectory_events(client, monkeypatch):
     assert emitter.payloads[-1]["correlation"]["ward_run_id"] == "fixture-run"
 
 
-def test_chat_completion_uses_tracing(monkeypatch):
+def test_chat_completion_uses_tracing(client, monkeypatch):
     spans = []
     terminal_logs = []
     tracer = _Tracer(spans)
@@ -202,20 +297,19 @@ def test_chat_completion_uses_tracing(monkeypatch):
     monkeypatch.setattr(upstream, "chat", fake_chat)
     monkeypatch.setattr(models, "_catalog", fake_catalog)
     models.reset_catalog()
-    with TestClient(app) as c:
-        resp = c.post(
-            "/v1/chat/completions",
-            json={
-                "model": "qwen3:4b",
-                "messages": [{"role": "user", "content": "capital of France?"}],
-            },
-        )
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "messages": [{"role": "user", "content": "capital of France?"}],
+        },
+    )
     assert resp.status_code == 200
     assert any(name == "request.chat" for name, _ in spans)
     assert ("request.chat", "request.completed") in terminal_logs
 
 
-def test_chat_completion_ingests_ward_headers(monkeypatch):
+def test_chat_completion_ingests_ward_headers(client, monkeypatch):
     spans = []
     tracer = _Tracer(spans)
     monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
@@ -234,24 +328,23 @@ def test_chat_completion_ingests_ward_headers(monkeypatch):
     monkeypatch.setattr(upstream, "chat", fake_chat)
     monkeypatch.setattr(models, "_catalog", fake_catalog)
     models.reset_catalog()
-    with TestClient(app) as c:
-        resp = c.post(
-            "/v1/chat/completions",
-            json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
-            headers={
-                "x-request-id": "req-123",
-                "x-ward-run-id": "run-123",
-                "x-ward-container-name": "container-123",
-                "x-ward-role": "role-123",
-                "x-ward-harness": "harness-123",
-                "x-ward-target-repo": "repo-123",
-                "x-ward-issue-ref": "issue-123",
-                "x-ward-workflow": "workflow-123",
-                "x-ward-context-level": "2",
-                "x-ward-version": "v1",
-                "x-agent-session-id": "session-123",
-            },
-        )
+    resp = client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+        headers={
+            "x-request-id": "req-123",
+            "x-ward-run-id": "run-123",
+            "x-ward-container-name": "container-123",
+            "x-ward-role": "role-123",
+            "x-ward-harness": "harness-123",
+            "x-ward-target-repo": "repo-123",
+            "x-ward-issue-ref": "issue-123",
+            "x-ward-workflow": "workflow-123",
+            "x-ward-context-level": "2",
+            "x-ward-version": "v1",
+            "x-agent-session-id": "session-123",
+        },
+    )
     assert resp.status_code == 200
     attrs = _span_attrs(spans, "request.chat")
     assert attrs["agentproxy.request_id"] == "req-123"
@@ -268,7 +361,7 @@ def test_chat_completion_ingests_ward_headers(monkeypatch):
     assert _span_attrs(spans, "queue.wait")["ward.run_id"] == "run-123"
 
 
-def test_chat_completion_body_metadata_fallback(monkeypatch):
+def test_chat_completion_body_metadata_fallback(client, monkeypatch):
     spans = []
     tracer = _Tracer(spans)
     monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
@@ -287,22 +380,21 @@ def test_chat_completion_body_metadata_fallback(monkeypatch):
     monkeypatch.setattr(upstream, "chat", fake_chat)
     monkeypatch.setattr(models, "_catalog", fake_catalog)
     models.reset_catalog()
-    with TestClient(app) as c:
-        resp = c.post(
-            "/v1/chat/completions",
-            json={
-                "model": "qwen3:4b",
-                "messages": [{"role": "user", "content": "hi"}],
-                "metadata": {
-                    "request_id": "req-body",
-                    "ward.run_id": "run-body",
-                    "ward.target_repo": "repo-body",
-                    "ward.issue_ref": "issue-body",
-                    "ward.harness": "harness-body",
-                    "agent.session_id": "session-body",
-                },
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "metadata": {
+                "request_id": "req-body",
+                "ward.run_id": "run-body",
+                "ward.target_repo": "repo-body",
+                "ward.issue_ref": "issue-body",
+                "ward.harness": "harness-body",
+                "agent.session_id": "session-body",
             },
-        )
+        },
+    )
     assert resp.status_code == 200
     attrs = _span_attrs(spans, "request.chat")
     assert attrs["agentproxy.request_id"] == "req-body"
@@ -313,7 +405,7 @@ def test_chat_completion_body_metadata_fallback(monkeypatch):
     assert attrs["agent.session_id"] == "session-body"
 
 
-def test_chat_completion_headers_override_body_metadata(monkeypatch):
+def test_chat_completion_headers_override_body_metadata(client, monkeypatch):
     spans = []
     tracer = _Tracer(spans)
     monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
@@ -332,28 +424,27 @@ def test_chat_completion_headers_override_body_metadata(monkeypatch):
     monkeypatch.setattr(upstream, "chat", fake_chat)
     monkeypatch.setattr(models, "_catalog", fake_catalog)
     models.reset_catalog()
-    with TestClient(app) as c:
-        resp = c.post(
-            "/v1/chat/completions",
-            json={
-                "model": "qwen3:4b",
-                "messages": [{"role": "user", "content": "hi"}],
-                "metadata": {
-                    "request_id": "req-body",
-                    "ward.run_id": "run-body",
-                    "ward.target_repo": "repo-body",
-                    "ward.issue_ref": "issue-body",
-                    "agent.session_id": "session-body",
-                },
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "messages": [{"role": "user", "content": "hi"}],
+            "metadata": {
+                "request_id": "req-body",
+                "ward.run_id": "run-body",
+                "ward.target_repo": "repo-body",
+                "ward.issue_ref": "issue-body",
+                "agent.session_id": "session-body",
             },
-            headers={
-                "x-request-id": "req-header",
-                "x-ward-run-id": "run-header",
-                "x-ward-target-repo": "repo-header",
-                "x-ward-issue-ref": "issue-header",
-                "x-agent-session-id": "session-header",
-            },
-        )
+        },
+        headers={
+            "x-request-id": "req-header",
+            "x-ward-run-id": "run-header",
+            "x-ward-target-repo": "repo-header",
+            "x-ward-issue-ref": "issue-header",
+            "x-agent-session-id": "session-header",
+        },
+    )
     assert resp.status_code == 200
     attrs = _span_attrs(spans, "request.chat")
     assert attrs["agentproxy.request_id"] == "req-header"
@@ -363,7 +454,7 @@ def test_chat_completion_headers_override_body_metadata(monkeypatch):
     assert attrs["agent.session_id"] == "session-header"
 
 
-def test_completions_body_metadata_fallback(monkeypatch):
+def test_completions_body_metadata_fallback(client, monkeypatch):
     spans = []
     tracer = _Tracer(spans)
     monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
@@ -382,20 +473,19 @@ def test_completions_body_metadata_fallback(monkeypatch):
     monkeypatch.setattr(upstream, "chat", fake_chat)
     monkeypatch.setattr(models, "_catalog", fake_catalog)
     models.reset_catalog()
-    with TestClient(app) as c:
-        resp = c.post(
-            "/v1/completions",
-            json={
-                "model": "qwen3:4b",
-                "prompt": "hello",
-                "metadata": {
-                    "request_id": "req-completions-body",
-                    "ward.run_id": "run-completions-body",
-                    "ward.target_repo": "repo-completions-body",
-                    "ward.issue_ref": "issue-completions-body",
-                },
+    resp = client.post(
+        "/v1/completions",
+        json={
+            "model": "qwen3:4b",
+            "prompt": "hello",
+            "metadata": {
+                "request_id": "req-completions-body",
+                "ward.run_id": "run-completions-body",
+                "ward.target_repo": "repo-completions-body",
+                "ward.issue_ref": "issue-completions-body",
             },
-        )
+        },
+    )
     assert resp.status_code == 200
     attrs = _span_attrs(spans, "request.completions")
     assert attrs["agentproxy.request_id"] == "req-completions-body"
@@ -404,7 +494,7 @@ def test_completions_body_metadata_fallback(monkeypatch):
     assert attrs["ward.issue_ref"] == "issue-completions-body"
 
 
-def test_stream_chat_completion_ingests_metadata(monkeypatch):
+def test_stream_chat_completion_ingests_metadata(client, monkeypatch):
     spans = []
     tracer = _Tracer(spans)
     monkeypatch.setattr("app.main.get_tracer", lambda: tracer)
@@ -432,23 +522,22 @@ def test_stream_chat_completion_ingests_metadata(monkeypatch):
     monkeypatch.setattr(resilience, "dispatch_stream", fake_dispatch_stream)
     monkeypatch.setattr(models, "_catalog", fake_catalog)
     models.reset_catalog()
-    with TestClient(app) as c:
-        resp = c.post(
-            "/v1/chat/completions",
-            json={
-                "model": "qwen3:4b",
-                "stream": True,
-                "messages": [{"role": "user", "content": "hi"}],
-                "metadata": {
-                    "ward.run_id": "run-stream",
-                    "ward.target_repo": "repo-stream",
-                    "ward.issue_ref": "issue-stream",
-                    "ward.harness": "harness-stream",
-                    "agent.session_id": "session-stream",
-                },
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "stream": True,
+            "messages": [{"role": "user", "content": "hi"}],
+            "metadata": {
+                "ward.run_id": "run-stream",
+                "ward.target_repo": "repo-stream",
+                "ward.issue_ref": "issue-stream",
+                "ward.harness": "harness-stream",
+                "agent.session_id": "session-stream",
             },
-            headers={"x-request-id": "req-stream"},
-        )
+        },
+        headers={"x-request-id": "req-stream"},
+    )
     assert resp.status_code == 200
     assert "data:" in resp.text
     assert _span_attrs(spans, "request.chat")["ward.run_id"] == "run-stream"

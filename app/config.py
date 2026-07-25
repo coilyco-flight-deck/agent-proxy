@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     proxy_port: int = Field(default=8080)
     log_level: str = Field(default="INFO")
 
+    # Streamable HTTP MCP transport. Production deployments set the public
+    # hostname explicitly. Requests without an Origin header are valid
+    # server-to-server traffic, while any supplied Origin must be allowlisted.
+    mcp_allowed_hosts: str = Field(default="127.0.0.1:*,localhost:*,testserver")
+    mcp_allowed_origins: str = Field(default="http://127.0.0.1:*,http://localhost:*,http://[::1]:*")
+
     # Queue / worker sizing (leg 04 step 3).
     queue_maxsize: int = Field(default=100)
     worker_count: int = Field(default=4)
@@ -148,6 +154,12 @@ class Settings(BaseSettings):
 
     def resolved_api_fallback_key(self) -> str:
         return _ssm_get(SSM_API_FALLBACK_KEY) or os.environ.get("PROXY_API_FALLBACK_KEY", "")
+
+    def resolved_mcp_allowed_hosts(self) -> list[str]:
+        return [value.strip() for value in self.mcp_allowed_hosts.split(",") if value.strip()]
+
+    def resolved_mcp_allowed_origins(self) -> list[str]:
+        return [value.strip() for value in self.mcp_allowed_origins.split(",") if value.strip()]
 
     def backend_overrides(self) -> list[dict[str, Any]] | None:
         """Parsed backend-chain override, or None to use the built-in tower."""
