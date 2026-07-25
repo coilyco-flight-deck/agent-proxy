@@ -19,8 +19,13 @@ BOOT_LOG="$(mktemp -t agent-proxy-boot.XXXXXX.log)"
 echo "=== uv sync --frozen --no-dev (the exact Dockerfile install path) ==="
 uv sync --frozen --no-dev
 
-echo "=== boot: .venv/bin/python -m app.main (the exact container CMD) ==="
-PROXY_HOST=127.0.0.1 PROXY_PORT="$PORT" .venv/bin/python -m app.main >"$BOOT_LOG" 2>&1 &
+PYTHON_BIN=".venv/bin/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN=".venv/Scripts/python.exe"
+fi
+
+echo "=== boot: ${PYTHON_BIN} -m app.main ==="
+PROXY_HOST=127.0.0.1 PROXY_PORT="$PORT" "$PYTHON_BIN" -m app.main >"$BOOT_LOG" 2>&1 &
 APP_PID=$!
 cleanup() { kill "$APP_PID" 2>/dev/null || true; }
 trap cleanup EXIT

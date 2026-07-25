@@ -20,13 +20,16 @@ echo "Probing ${BASE_URL} (readiness timeout ${TIMEOUT}s)"
 # 1. Wait for /healthz to answer 200 (server may still be binding).
 ready=0
 for _ in $(seq 1 "$((TIMEOUT * 2))"); do
-  if curl -fsS "${BASE_URL}/healthz" >/dev/null 2>&1; then ready=1; break; fi
+  if curl -fsS --max-time 2 "${BASE_URL}/healthz" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
   sleep 0.5
 done
 [ "$ready" = 1 ] || fail "/healthz never became ready within ${TIMEOUT}s"
 
 # 2. /healthz body is {"status":"ok"}.
-body=$(curl -fsS "${BASE_URL}/healthz") || fail "/healthz request failed"
+body=$(curl -fsS --max-time "$TIMEOUT" "${BASE_URL}/healthz") || fail "/healthz request failed"
 { echo "$body" | grep -q '"status"' && echo "$body" | grep -q 'ok'; } \
   || fail "/healthz body unexpected: $body"
 echo "  OK   /healthz -> $body"
@@ -36,13 +39,15 @@ echo "  OK   /healthz -> $body"
 # so a daemonless / tower-less boot correctly returns an empty data array. We
 # assert the list *shape* here, not a non-empty catalog, since this probe runs
 # with no backend reachable.
-models=$(curl -fsS "${BASE_URL}/v1/models") || fail "/v1/models request failed"
+models=$(curl -fsS --max-time "$TIMEOUT" "${BASE_URL}/v1/models") \
+  || fail "/v1/models request failed"
 { echo "$models" | grep -q '"object"' && echo "$models" | grep -q '"data"'; } \
   || fail "/v1/models shape unexpected: $models"
 echo "  OK   /v1/models -> OpenAI-shaped list (entries are live backend tags)"
 
 # 4. /metrics is Prometheus exposition text.
-metrics=$(curl -fsS "${BASE_URL}/metrics") || fail "/metrics request failed"
+metrics=$(curl -fsS --max-time "$TIMEOUT" "${BASE_URL}/metrics") \
+  || fail "/metrics request failed"
 echo "$metrics" | grep -q '# HELP' || fail "/metrics not in Prometheus format"
 echo "  OK   /metrics -> Prometheus exposition"
 
