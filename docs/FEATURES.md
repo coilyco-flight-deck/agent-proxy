@@ -28,7 +28,8 @@ Status legend:
 - **Evaluation and annotation records** - landed - automatic evaluations, verifiers, human annotations, and interventions join to stable trajectories with immutable evidence, supersession, disagreement, late-arrival, replay, redaction, and access-tier semantics.
 - **Versioned dataset exports** - landed - SFT, preference, verifier, reward, and held-out evaluation schemas produce write-once manifests with source provenance, content hashes, deterministic trajectory-level splits, reproducibility, and opt-in restricted body references.
 - **Operational and governance views** - landed - internal reliability, cost and latency, policy, evaluation, and harness-fit query contracts join durable trajectories to OTLP context, enforce access tiers, publish freshness and reconstruction limits, and provide evidence-only Ward dossier inputs.
-- **LiteLLM parity decision and runner** - landed - a machine-readable comparison selects standalone LiteLLM, while an executable endpoint probe gates model discovery, chat shape, streaming, finish reasons, usage, and error mapping. Runtime integration and live parity remain planned.
+- **LiteLLM parity decision and runner** - landed - a machine-readable comparison selects standalone LiteLLM, while an executable endpoint probe gates model discovery, chat shape, streaming, finish reasons, usage, and error mapping.
+- **Authenticated LiteLLM inner-gateway client** - landed - mounted-file bearer authentication, service-key model filtering, tower-backed context metadata, safe top-level `num_ctx`, OpenAI option translation, and body-safe Ward correlation support a standalone LiteLLM hop without weakening Agent Proxy policy or trajectory ownership.
 - **Agent-compose trajectory ingestion** - landed - a cold-path adapter maps the
   immutable manifest and public-safe decision trace into actor, artifact, and
   observation events without copying the opaque context tree or granting
@@ -41,7 +42,7 @@ Status legend:
 
 ## Planned architecture v2
 
-- **LiteLLM commodity gateway integration** - planned - the selected standalone gateway still needs live tower, key, budget, spend, context-safety, and trace parity before provider integration, routing, retries, fallbacks, and cost accounting move behind it.
+- **LiteLLM commodity behavior retirement** - planned - joined live evidence must still prove context delivery, trace continuity, retry ownership, and rollback before Agent Proxy provider routing, retries, fallbacks, queueing, or circuit behavior can retire.
 ## References
 
 - [`architecture-v2.md`](architecture-v2.md) states ownership boundaries and the migration inventory.

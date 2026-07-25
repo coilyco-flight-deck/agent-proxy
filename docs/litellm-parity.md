@@ -3,8 +3,9 @@
 Agent Proxy selects a **standalone LiteLLM Proxy** as its inner commodity
 gateway. The Python SDK is not selected.
 
-This decision does not cut traffic over or delete current reliability behavior.
-The standalone boundary must pass the executable tower parity gates first.
+This decision does not delete current reliability behavior. The authenticated
+inner-gateway client is implemented, while deployment activation and joined
+live evidence remain separate gates.
 
 ## Why standalone
 
@@ -65,9 +66,26 @@ nonzero on surface divergence. A passing report sets `surface_parity_passed`
 while `cutover_authorized` remains false. Unit fixtures run without the tower
 and prove that every gate detects its expected failure.
 
-## Cutover blockers
+## Landed integration boundary
 
-Standalone is selected, but cutover is not yet authorized:
+Agent Proxy can now use a standalone LiteLLM service without copying gateway
+credentials into tracked configuration:
+
+* A backend spec names only a mounted API-key file.
+* LiteLLM's authenticated `/v1/models` response supplies the authorized model
+  set. Agent Proxy intersects it with tower `/api/tags` context metadata.
+* Agent Proxy forwards its derived safe `num_ctx` as a top-level LiteLLM
+  extension and retains delivered-context verification.
+* OpenTelemetry HTTP instrumentation carries W3C trace context. A filtered
+  metadata block carries Ward and Agent Proxy correlation fields without body
+  attributes.
+* Direct tower routing remains a deployment rollback until joined evidence
+  authorizes retirement.
+
+## Retirement blockers
+
+Standalone is selected and the client boundary is implemented, but current
+gateway behavior cannot retire yet:
 
 * The real tower model catalog must pass and expose enough metadata for Agent
   Proxy safe-context policy.

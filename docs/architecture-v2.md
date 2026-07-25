@@ -4,7 +4,7 @@
 
 Agent Proxy is the **observation, trajectory collection, and data-processing plane** for the agentic operations stack. LiteLLM supplies the commodity inference gateway beneath it. The current reliability proxy is retained as the first collection tap until LiteLLM parity is proven.
 
-This document defines the target ownership boundary. It does not claim that the v2 cold path, a durable store, or LiteLLM integration has landed. The implementation sequence is in [`work-graph.md`](work-graph.md).
+This document defines the target ownership boundary. The durable cold path and the authenticated LiteLLM inner-gateway client have landed. Deployment evidence and the remaining commodity-behavior dispositions are tracked separately from this ownership contract. The implementation sequence is in [`work-graph.md`](work-graph.md).
 
 ## Ownership boundary
 
@@ -35,8 +35,11 @@ The hot path is latency-sensitive. It owns only work that must happen before, du
 The hot path never synchronously waits for trajectory materialization, evaluation, training export, bulk body processing, or expensive ML analysis.
 
 The commodity gateway integration is a standalone LiteLLM Proxy, not an
-embedded SDK. [`litellm-parity.md`](litellm-parity.md) records the decision and
-the live gates that must pass before the current gateway behavior can retire.
+embedded SDK. Agent Proxy can authenticate from a mounted key file, filter the
+LiteLLM service-key catalog through tower context metadata, forward its safe
+`num_ctx`, and carry body-safe correlation metadata.
+[`litellm-parity.md`](litellm-parity.md) records the decision and the live gates
+that must pass before current gateway behavior can retire.
 
 ### Agent Proxy cold path
 

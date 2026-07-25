@@ -231,12 +231,13 @@ def _verify_delivered_context(
 ) -> None:
     """Fail loud when the backend delivered less context than the proxy asked for.
 
-    Only ollama backends (``injects_num_ctx``) are subject to the
-    ``OLLAMA_NUM_PARALLEL`` division; an openai-dialect backend carries its window
-    at launch and reports usage differently, so it is skipped. On detection this
-    marks the result (so ``finish_reason`` becomes ``length``, never a silent short
-    read), increments ``llm_context_truncated_total``, and emits a structured
-    warning; when ``fail_on_context_truncation`` is set it raises
+    Every backend that accepts Agent Proxy's derived ``num_ctx`` must report
+    prompt usage so the proxy can detect a shorter delivered window. Ollama
+    receives ``options.num_ctx`` directly. LiteLLM receives the same policy as a
+    top-level extension and returns OpenAI usage. On detection this marks the
+    result (so ``finish_reason`` becomes ``length``, never a silent short read),
+    increments ``llm_context_truncated_total``, and emits a structured warning.
+    When ``fail_on_context_truncation`` is set it raises
     :class:`ContextTruncated` for a hard 502 instead.
     """
     if not backend.injects_num_ctx:
@@ -275,8 +276,8 @@ def _verify_delivered_context(
         raise ContextTruncated(
             f"{model.name}: backend {backend.name} delivered {result.prompt_eval_count} "
             f"prompt tokens against a {model.num_ctx}-token window - effective context "
-            f"was cut below the ask (OLLAMA_NUM_PARALLEL division). Pin the backend to "
-            f"OLLAMA_NUM_PARALLEL=1 or set PROXY_OLLAMA_NUM_PARALLEL to match it."
+            f"was cut below the ask. Verify the gateway's num_ctx forwarding and the "
+            f"provider's effective context configuration."
         )
 
 

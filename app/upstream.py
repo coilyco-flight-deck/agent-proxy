@@ -4,16 +4,17 @@ Upstream client (leg 02 "upstream client", leg 04 step 2).
 Forwards a chat/completion to a backend's native API with the safe model
 context injected when that backend accepts it. Ollama backends speak
 ``/api/chat`` or ``/api/generate`` and take ``options.num_ctx``. OpenAI-shaped
-backends like llama-server speak ``/v1/chat/completions`` and carry the context
-at launch, so the client skips injection and normalizes the response back to the
-proxy's canonical internal shape.
+backends like LiteLLM speak ``/v1/chat/completions`` and take a top-level
+``num_ctx`` extension. Both normalize back to the proxy's canonical internal
+shape.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from pathlib import Path
+from typing import Any, AsyncIterator, TypedDict
 
 import httpx
 
@@ -24,6 +25,10 @@ from .obs import get_tracer, log
 
 class UpstreamError(Exception):
     """A backend call failed at the transport/HTTP level (not a bad generation)."""
+
+
+class RequestAuthKwargs(TypedDict, total=False):
+    headers: dict[str, str]
 
 
 @dataclass
@@ -44,6 +49,22 @@ class UpstreamResult:
 
 
 _client: httpx.AsyncClient | None = None
+
+_CORRELATION_METADATA_KEYS = (
+    "agentproxy.logical_model",
+    "agentproxy.request_kind",
+    "agentproxy.request_id",
+    "ward.run_id",
+    "ward.container_name",
+    "ward.role",
+    "ward.harness",
+    "ward.target_repo",
+    "ward.issue_ref",
+    "ward.workflow",
+    "ward.context_level",
+    "ward.version",
+    "agent.session_id",
+)
 
 
 def _correlation_log_fields(span_attrs: dict[str, Any] | None) -> dict[str, Any]:
@@ -79,6 +100,31 @@ def _correlation_log_fields(span_attrs: dict[str, Any] | None) -> dict[str, Any]
     return fields
 
 
+def _gateway_metadata(span_attrs: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the body-safe correlation fields forwarded through LiteLLM."""
+    if not span_attrs:
+        return {}
+    return {key: span_attrs[key] for key in _CORRELATION_METADATA_KEYS if key in span_attrs}
+
+
+def request_auth_kwargs(backend: Backend) -> RequestAuthKwargs:
+    """Build an authenticated request kwarg without exposing the key.
+
+    The backend spec contains only a mounted file path. The secret value never
+    enters tracked configuration, argv, logs, exception text, or span
+    attributes.
+    """
+    if not backend.api_key_file:
+        return {}
+    try:
+        key = Path(backend.api_key_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise UpstreamError(f"{backend.name}: authentication key unavailable") from exc
+    if not key:
+        raise UpstreamError(f"{backend.name}: authentication key unavailable")
+    return {"headers": {"Authorization": f"Bearer {key}"}}
+
+
 def get_client() -> httpx.AsyncClient:
     """Shared async httpx client. Instrumented by OTel's httpx integration when wired."""
     global _client
@@ -111,6 +157,47 @@ def _inject_options(
     opts = dict(base or {})
     opts["num_ctx"] = num_ctx * max(num_parallel, 1)
     return opts
+
+
+def _openai_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    """Translate the proxy's Ollama-shaped sampling options back to OpenAI."""
+    mapped = dict(options or {})
+    if "num_predict" in mapped:
+        mapped["max_tokens"] = mapped.pop("num_predict")
+    mapped.pop("num_ctx", None)
+    return mapped
+
+
+def _chat_body(
+    backend: Backend,
+    num_ctx: int,
+    messages: list[dict[str, Any]],
+    *,
+    stream: bool,
+    tools: list[dict[str, Any]] | None,
+    options: dict[str, Any] | None,
+    span_attrs: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Shape one request while preserving Agent Proxy's safe-context policy."""
+    body: dict[str, Any] = {
+        "model": backend.ollama_tag,
+        "messages": messages,
+        "stream": stream,
+    }
+    if backend.dialect == "ollama":
+        if backend.injects_num_ctx:
+            body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
+        elif options:
+            body["options"] = dict(options)
+    else:
+        body.update(_openai_options(options))
+        if backend.injects_num_ctx:
+            body["num_ctx"] = num_ctx
+        if metadata := _gateway_metadata(span_attrs):
+            body["metadata"] = metadata
+    if tools:
+        body["tools"] = tools
+    return body
 
 
 def _chat_path(backend: Backend) -> str:
@@ -170,13 +257,16 @@ async def chat(
     span_attrs: dict[str, Any] | None = None,
 ) -> UpstreamResult:
     """Non-streaming upstream call with the safe context applied where valid."""
-    body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": False}
-    if backend.injects_num_ctx:
-        body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
-    elif options:
-        body.update(options)
-    if tools:
-        body["tools"] = tools
+    body = _chat_body(
+        backend,
+        num_ctx,
+        messages,
+        stream=False,
+        tools=tools,
+        options=options,
+        span_attrs=span_attrs,
+    )
+    auth_kwargs = request_auth_kwargs(backend)
     tracer = get_tracer()
     attrs = {
         "agentproxy.backend": backend.name,
@@ -189,7 +279,10 @@ async def chat(
     if tracer is None:
         try:
             resp = await get_client().post(
-                f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend)
+                f"{backend.url}{_chat_path(backend)}",
+                json=body,
+                timeout=_timeout(backend),
+                **auth_kwargs,
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
@@ -204,7 +297,10 @@ async def chat(
             span.set_attribute(key, value)
         try:
             resp = await get_client().post(
-                f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend)
+                f"{backend.url}{_chat_path(backend)}",
+                json=body,
+                timeout=_timeout(backend),
+                **auth_kwargs,
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
@@ -248,13 +344,16 @@ async def chat_stream(
     span_attrs: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming upstream call, normalized to the proxy's internal chunk shape."""
-    body: dict[str, Any] = {"model": backend.ollama_tag, "messages": messages, "stream": True}
-    if backend.injects_num_ctx:
-        body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
-    elif options:
-        body.update(options)
-    if tools:
-        body["tools"] = tools
+    body = _chat_body(
+        backend,
+        num_ctx,
+        messages,
+        stream=True,
+        tools=tools,
+        options=options,
+        span_attrs=span_attrs,
+    )
+    auth_kwargs = request_auth_kwargs(backend)
     tracer = get_tracer()
     attrs = {
         "agentproxy.backend": backend.name,
@@ -271,7 +370,11 @@ async def chat_stream(
             for key, value in attrs.items():
                 span.set_attribute(key, value)
         async with get_client().stream(
-            "POST", f"{backend.url}{_chat_path(backend)}", json=body, timeout=_timeout(backend)
+            "POST",
+            f"{backend.url}{_chat_path(backend)}",
+            json=body,
+            timeout=_timeout(backend),
+            **auth_kwargs,
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -336,24 +439,45 @@ async def generate(
 ) -> UpstreamResult:
     """Non-streaming native ``/api/generate`` for the ``/v1/completions`` surface."""
     body: dict[str, Any] = {"model": backend.ollama_tag, "prompt": prompt, "stream": False}
-    if backend.injects_num_ctx:
-        body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
-    elif options:
-        body.update(options)
+    if backend.dialect == "ollama":
+        if backend.injects_num_ctx:
+            body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
+        elif options:
+            body["options"] = dict(options)
+        path = "/api/generate"
+    else:
+        body.update(_openai_options(options))
+        if backend.injects_num_ctx:
+            body["num_ctx"] = num_ctx
+        path = "/v1/completions"
     try:
         resp = await get_client().post(
-            f"{backend.url}/api/generate", json=body, timeout=_timeout(backend)
+            f"{backend.url}{path}",
+            json=body,
+            timeout=_timeout(backend),
+            **request_auth_kwargs(backend),
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise UpstreamError(f"{backend.name}: {exc}") from exc
     data = resp.json()
+    if backend.dialect == "ollama":
+        return UpstreamResult(
+            model=data.get("model", ""),
+            content=data.get("response", "") or "",
+            prompt_eval_count=int(data.get("prompt_eval_count", 0) or 0),
+            eval_count=int(data.get("eval_count", 0) or 0),
+            done_reason=data.get("done_reason", "stop") or "stop",
+            raw=data,
+        )
+    choice = (data.get("choices") or [{}])[0]
+    usage = data.get("usage") or {}
     return UpstreamResult(
         model=data.get("model", ""),
-        content=data.get("response", "") or "",
-        prompt_eval_count=int(data.get("prompt_eval_count", 0) or 0),
-        eval_count=int(data.get("eval_count", 0) or 0),
-        done_reason=data.get("done_reason", "stop") or "stop",
+        content=choice.get("text", "") or "",
+        prompt_eval_count=int(usage.get("prompt_tokens", 0) or 0),
+        eval_count=int(usage.get("completion_tokens", 0) or 0),
+        done_reason=choice.get("finish_reason", "stop") or "stop",
         raw=data,
     )
 
@@ -362,8 +486,10 @@ async def health(backend: Backend) -> bool:
     """Cheap liveness probe used by the circuit breaker's half-open recovery."""
     try:
         resp = await get_client().get(
-            f"{backend.url}{_health_path(backend)}", timeout=httpx.Timeout(5.0)
+            f"{backend.url}{_health_path(backend)}",
+            timeout=httpx.Timeout(5.0),
+            **request_auth_kwargs(backend),
         )
         return resp.status_code == 200
-    except httpx.HTTPError:
+    except (httpx.HTTPError, UpstreamError):
         return False

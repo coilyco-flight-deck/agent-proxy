@@ -25,12 +25,44 @@ class _CapturingClient:
     def __init__(self, payload):
         self.payload = payload
         self.last_body = None
+        self.last_headers = None
         self.last_url = None
 
-    async def post(self, url, json=None, timeout=None):
+    async def post(self, url, json=None, timeout=None, headers=None):
         self.last_url = url
         self.last_body = json
+        self.last_headers = headers
         return _FakeResponse(self.payload)
+
+
+class _StreamingClient:
+    def __init__(self, lines):
+        self.lines = lines
+        self.last_body = None
+        self.last_headers = None
+        self.last_url = None
+
+    def stream(self, method, url, json=None, timeout=None, headers=None):
+        self.last_url = url
+        self.last_body = json
+        self.last_headers = headers
+        lines = self.lines
+
+        class _Response:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                for line in lines:
+                    yield line
+
+        return _Response()
 
 
 class _Span:
@@ -146,6 +178,108 @@ async def test_openai_backend_uses_chat_completions(monkeypatch, openai_backend)
     assert result.thinking == "why"
     assert result.prompt_eval_count == 12
     assert result.eval_count == 7
+
+
+async def test_litellm_backend_authenticates_and_preserves_policy(monkeypatch, tmp_path):
+    key_file = tmp_path / "litellm-key"
+    key_file.write_text("service-key\n", encoding="utf-8")
+    backend = Backend(
+        name="litellm",
+        url="http://litellm:4000",
+        ollama_tag="qwen3-coder:30b",
+        dialect="openai",
+        api_key_file=str(key_file),
+        injects_num_ctx=True,
+    )
+    fake = _CapturingClient(
+        {
+            "model": "qwen3-coder:30b",
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 14, "completion_tokens": 2},
+        }
+    )
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+
+    result = await upstream.chat(
+        backend,
+        num_ctx=48128,
+        messages=[{"role": "user", "content": "x"}],
+        options={"temperature": 0.2, "num_predict": 32, "num_ctx": 999999},
+        span_attrs={
+            "agentproxy.request_id": "request-1",
+            "ward.run_id": "run-1",
+            "agentproxy.messages": "must-not-cross-the-inner-hop",
+        },
+    )
+
+    assert fake.last_headers == {"Authorization": "Bearer service-key"}
+    assert fake.last_body["num_ctx"] == 48128
+    assert fake.last_body["max_tokens"] == 32
+    assert "num_predict" not in fake.last_body
+    assert fake.last_body["metadata"] == {
+        "agentproxy.request_id": "request-1",
+        "ward.run_id": "run-1",
+    }
+    assert result.content == "ok"
+
+
+async def test_litellm_stream_authenticates_and_preserves_policy(monkeypatch, tmp_path):
+    key_file = tmp_path / "litellm-key"
+    key_file.write_text("service-key\n", encoding="utf-8")
+    backend = Backend(
+        name="litellm",
+        url="http://litellm:4000",
+        ollama_tag="qwen3-coder:30b",
+        dialect="openai",
+        api_key_file=str(key_file),
+        injects_num_ctx=True,
+    )
+    fake = _StreamingClient(
+        [
+            'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ]
+    )
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+    monkeypatch.setattr(upstream, "get_tracer", lambda: None)
+
+    chunks = [
+        chunk
+        async for chunk in upstream.chat_stream(
+            backend,
+            num_ctx=48128,
+            messages=[{"role": "user", "content": "x"}],
+            options={"num_predict": 16},
+            span_attrs={"agentproxy.request_id": "request-1"},
+        )
+    ]
+
+    assert fake.last_headers == {"Authorization": "Bearer service-key"}
+    assert fake.last_body["stream"] is True
+    assert fake.last_body["num_ctx"] == 48128
+    assert fake.last_body["max_tokens"] == 16
+    assert fake.last_body["metadata"] == {"agentproxy.request_id": "request-1"}
+    assert chunks == [
+        {"message": {"content": "hi"}, "done": False},
+        {"message": {}, "done": True, "done_reason": "stop"},
+    ]
+
+
+async def test_missing_litellm_key_fails_without_secret_or_path(monkeypatch, tmp_path):
+    backend = Backend(
+        name="litellm",
+        url="http://litellm:4000",
+        ollama_tag="qwen3-coder:30b",
+        dialect="openai",
+        api_key_file=str(tmp_path / "missing-key"),
+    )
+    monkeypatch.setattr(upstream, "get_client", lambda: _CapturingClient({}))
+
+    with pytest.raises(upstream.UpstreamError) as exc:
+        await upstream.chat(backend, num_ctx=48128, messages=[])
+
+    assert str(exc.value) == "litellm: authentication key unavailable"
 
 
 async def test_span_attrs_flow_to_upstream_span_and_log(monkeypatch, backend, capsys):

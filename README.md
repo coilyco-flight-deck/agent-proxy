@@ -2,7 +2,7 @@
 
 Agent Proxy is the **observation, trajectory collection, and data-processing plane** for the agentic operations stack. It protects the model request path with Agent Proxy-specific policy and safety behavior while turning operational work into trustworthy trajectory evidence. LiteLLM is the intended commodity inference gateway underneath it.
 
-The repository is in transition. The existing OpenAI-compatible reliability proxy is implemented and remains the first collection tap. LiteLLM is **not yet a runtime dependency**. The [parity decision](docs/litellm-parity.md) selects a standalone LiteLLM Proxy as the inner gateway, with live tower, key, budget, spend, and trace gates still blocking cutover. No current reliability behavior is removed until those gates prove replacement behavior.
+The repository is in transition. The OpenAI-compatible reliability proxy remains the first collection tap. It now supports a standalone LiteLLM Proxy as an authenticated inner gateway while retaining direct tower routing as the deployment rollback. The [parity decision](docs/litellm-parity.md) keeps current queueing, retry, fallback, and circuit behavior until joined live evidence proves which responsibilities can move.
 
 ## Stack ownership
 
@@ -31,7 +31,7 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - Immutable evaluation, verifier, human annotation, and intervention records with supersession, disagreement, late-arrival, privacy, and replay semantics.
 - Reproducible SFT, preference, verifier, reward, and held-out evaluation exports with write-once manifests and trajectory-level leakage prevention.
 - Governed reliability, cost and latency, policy, evaluation, and harness-fit views with OTLP joins, freshness metadata, and evidence-only Ward dossier inputs.
-- A machine-readable standalone-versus-SDK LiteLLM decision and executable endpoint parity runner. LiteLLM runtime integration has not landed.
+- A machine-readable standalone-versus-SDK LiteLLM decision, executable endpoint parity runner, and an authenticated inner-gateway client that intersects the LiteLLM service-key catalog with tower context metadata, forwards safe `num_ctx`, and carries body-safe correlation metadata.
 - Cold-path agent-compose bundle ingestion that retains role, selected-skill,
   artifact, and decision evidence without copying the opaque context tree.
 - Cold-path cli-guard audit and specgen policy ingestion that links guarded
@@ -43,43 +43,36 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 
 1. A harness sends an OpenAI-compatible request and Ward correlation metadata.
 2. Agent Proxy resolves the model, applies context safety and cheap structural checks, and emits operational evidence.
-3. The current reliability gateway queues and dispatches to an upstream provider.
+3. The current reliability gateway queues and dispatches through the configured inner gateway. Deployments can select direct tower access or authenticated standalone LiteLLM.
 4. Agent Proxy returns the normalized response and emits bounded request evidence.
 5. Future cold-path workers durably ingest and materialize that evidence. They never block the response path.
 
 ## Development
 
-Run tests:
-
-```bash
-uv sync --extra dev
-uv run pytest
-```
-
-Run the quality gate:
+Run tests and quality checks through Ward:
 
 ```bash
 ward exec test
-uv run ruff check .
-uv run black --check .
-uv run mypy app
-./boot_probe.sh
-./test-fixes.sh
+ward exec lint
+ward exec typecheck
+ward exec format-check
+ward exec boot-probe
+ward exec smoke
 ```
 
-Build and run the current proxy:
+Run the current proxy or its container acceptance test:
 
 ```bash
-docker build -t agent-proxy .
-docker run -p 8080:8080 agent-proxy
+ward exec serve
+ward exec test-container
 ```
 
 The proxy uses port 8080 by default. Set `PROXY_HOST`, `PROXY_PORT`, or `LOG_LEVEL` to override its host, port, or log level.
 
 ## Container validation
 
-- `ward test-container` or `./test-container.sh` needs a Docker daemon. It builds the image, starts it, and probes `/healthz`, `/v1/models`, and `/metrics`.
-- `ward boot-probe` or `./boot_probe.sh` is daemonless. It reproduces the Dockerfile installation and command path, then probes the same endpoints.
+- `ward exec test-container` needs a Docker daemon. It builds the image, starts it, and probes `/healthz`, `/v1/models`, and `/metrics`.
+- `ward exec boot-probe` is daemonless. It reproduces the Dockerfile installation and command path, then probes the same endpoints.
 
 ## Planning
 

@@ -36,6 +36,7 @@ class Backend:
     dialect: str = "ollama"
     chat_path: str | None = None
     health_path: str | None = None
+    api_key_file: str | None = None
     injects_num_ctx: bool = True
     timeout: float | None = None  # None -> use the global request_timeout.
     # The backend's OLLAMA_NUM_PARALLEL (issue #33). ollama divides an injected
@@ -125,6 +126,7 @@ def _backends_for_tag(tag: str) -> list[Backend]:
                 dialect=spec.get("dialect", "ollama"),
                 chat_path=spec.get("chat_path"),
                 health_path=spec.get("health_path"),
+                api_key_file=spec.get("api_key_file"),
                 injects_num_ctx=spec.get("injects_num_ctx", True),
                 timeout=spec.get("timeout"),
                 num_parallel=int(spec.get("num_parallel", default_parallel) or 1),
@@ -152,32 +154,69 @@ _catalog_cache: dict[str, dict[str, int | None]] = {}
 
 async def _catalog(base_url: str) -> tuple[dict[str, int | None], bool]:
     """Return ``(tag -> context_length, fetch_ok)`` for ``base_url``, caching
-    only successful reads."""
+    only successful reads.
+
+    Ollama remains the context-metadata authority. When the primary inference
+    backend is OpenAI-shaped (the standalone LiteLLM inner gateway), its
+    authenticated ``/v1/models`` catalog supplies the allowed model set and the
+    tower's ``/api/tags`` supplies context lengths. This keeps Agent Proxy's
+    safe-context policy above LiteLLM without exposing models the service key
+    cannot use.
+    """
     cached = _catalog_cache.get(base_url)
     if cached is not None:
         return cached, True
 
-    tags: dict[str, int | None] = {}
+    primary = _backends_for_tag("")[0]
     try:
         # Lazy import breaks the models <-> upstream import cycle and reuses the
         # shared, OTel-instrumented httpx client.
         from . import upstream
 
-        resp = await upstream.get_client().get(f"{base_url}/api/tags", timeout=10.0)
+        if primary.dialect == "ollama":
+            resp = await upstream.get_client().get(f"{base_url}/api/tags", timeout=10.0)
+            resp.raise_for_status()
+            tags = _ollama_tags(resp.json())
+            _catalog_cache[base_url] = tags
+            return tags, True
+
+        resp = await upstream.get_client().get(
+            f"{base_url}/v1/models",
+            timeout=10.0,
+            **upstream.request_auth_kwargs(primary),
+        )
         resp.raise_for_status()
-        data = resp.json()
-        for entry in data.get("models", []) or []:
-            name = entry.get("name") or entry.get("model")
-            if not name:
-                continue
-            details = entry.get("details") or {}
-            ctx = details.get("context_length")
-            tags[name] = ctx if isinstance(ctx, int) and ctx > 0 else None
+        allowed = {
+            entry.get("id")
+            for entry in (resp.json().get("data", []) or [])
+            if isinstance(entry, dict) and entry.get("id")
+        }
+
+        tower_resp = await upstream.get_client().get(
+            f"{get_settings().resolved_tower_base_url()}/api/tags",
+            timeout=10.0,
+        )
+        tower_resp.raise_for_status()
+        tower_tags = _ollama_tags(tower_resp.json())
+        tags = {name: tower_tags[name] for name in allowed if name in tower_tags}
     except Exception:
         return {}, False
 
     _catalog_cache[base_url] = tags
     return tags, True
+
+
+def _ollama_tags(data: dict[str, Any]) -> dict[str, int | None]:
+    """Extract model context metadata from an Ollama ``/api/tags`` response."""
+    tags: dict[str, int | None] = {}
+    for entry in data.get("models", []) or []:
+        name = entry.get("name") or entry.get("model")
+        if not name:
+            continue
+        details = entry.get("details") or {}
+        ctx = details.get("context_length")
+        tags[name] = ctx if isinstance(ctx, int) and ctx > 0 else None
+    return tags
 
 
 def reset_catalog() -> None:
