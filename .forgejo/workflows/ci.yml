@@ -3,7 +3,7 @@
 # locally: pytest, ruff, black --check, mypy, plus the two daemonless boot/import
 # smoke scripts.
 #
-# The jobs run in the pinned aos dev-base image, which already ships uv, managed
+# The jobs run in the moving :release aos dev-base image, which already ships uv, managed
 # Python, and ward. That lets CI skip `astral-sh/setup-uv` and invoke the repo's
 # declared commands directly.
 #
@@ -30,7 +30,7 @@ jobs:
   quality:
     runs-on: docker
     container:
-      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.255.0
+      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:release
     steps:
       - uses: actions/checkout@v4
       - name: Tests (ward test)
@@ -105,7 +105,7 @@ jobs:
   smoke:
     runs-on: docker
     container:
-      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:v0.255.0
+      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:release
     steps:
       - uses: actions/checkout@v4
       - name: Daemonless boot probe (ward boot-probe)
