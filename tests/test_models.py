@@ -5,6 +5,7 @@ import json
 import pytest
 
 from app import models, upstream
+from app.route_registry import DirectTarget, Route, RouteRegistry
 
 # The live-tower context lengths the issue cites: /api/tags reports
 # details.context_length per model.
@@ -181,6 +182,78 @@ async def test_litellm_catalog_intersects_key_models_with_tower_context(monkeypa
         ),
         ("http://tower:11434/api/tags", None),
     ]
+
+
+def _logical_registry(runtime: str = "ollama") -> RouteRegistry:
+    route = Route(
+        key="community/knowledge-retrieval",
+        upstream_alias="community/knowledge-retrieval",
+        direct=DirectTarget("ornith:35b", runtime),
+    )
+    return RouteRegistry(routes={route.key: route}, source={})
+
+
+async def test_logical_route_reaches_litellm_alias(monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "route_upstream_mode", "litellm")
+    monkeypatch.setattr(
+        settings,
+        "backends_json",
+        json.dumps(
+            [
+                {
+                    "name": "litellm",
+                    "url": "http://litellm:4000",
+                    "dialect": "openai",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(models, "get_route_registry", _logical_registry)
+
+    async def fake_tower_catalog(_base_url):
+        return {"ornith:35b": 65536}, True
+
+    monkeypatch.setattr(models, "_ollama_catalog", fake_tower_catalog)
+
+    model = await models.resolve("community/knowledge-retrieval")
+
+    assert model.name == "community/knowledge-retrieval"
+    assert model.primary.ollama_tag == "community/knowledge-retrieval"
+    assert model.upstream_mode == "litellm"
+    assert model.num_ctx == 48128
+
+
+async def test_logical_route_resolves_supported_direct_target(monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "route_upstream_mode", "direct")
+    monkeypatch.setattr(settings, "backends_json", "")
+    monkeypatch.setattr(models, "get_route_registry", _logical_registry)
+
+    async def fake_tower_catalog(_base_url):
+        return {"ornith:35b": 40960}, True
+
+    monkeypatch.setattr(models, "_ollama_catalog", fake_tower_catalog)
+
+    model = await models.resolve("community/knowledge-retrieval")
+
+    assert model.name == "community/knowledge-retrieval"
+    assert model.primary.ollama_tag == "ornith:35b"
+    assert model.upstream_mode == "direct"
+
+
+async def test_logical_route_rejects_unsupported_direct_runtime(monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "route_upstream_mode", "direct")
+    monkeypatch.setattr(settings, "backends_json", "")
+    monkeypatch.setattr(
+        models,
+        "get_route_registry",
+        lambda: _logical_registry("llama.cpp"),
+    )
+
+    with pytest.raises(models.RouteUnavailable, match="no supported direct target"):
+        await models.resolve("community/knowledge-retrieval")
 
 
 # --- the invariant: the caller can never override num_ctx ------------------- #

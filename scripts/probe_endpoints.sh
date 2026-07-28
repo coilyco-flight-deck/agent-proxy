@@ -43,7 +43,7 @@ models=$(curl -fsS --max-time "$TIMEOUT" "${BASE_URL}/v1/models") \
   || fail "/v1/models request failed"
 { echo "$models" | grep -q '"object"' && echo "$models" | grep -q '"data"'; } \
   || fail "/v1/models shape unexpected: $models"
-echo "  OK   /v1/models -> OpenAI-shaped list (entries are live backend tags)"
+echo "  OK   /v1/models -> OpenAI-shaped model list"
 
 # 4. /metrics is Prometheus exposition text.
 metrics=$(curl -fsS --max-time "$TIMEOUT" "${BASE_URL}/metrics") \

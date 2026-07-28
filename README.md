@@ -19,7 +19,8 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - An OpenAI-compatible `/v1/chat/completions`, `/v1/completions`, and `/v1/models` surface over the current gateway implementation.
 - A stateless Streamable HTTP MCP surface at `/mcp` with model discovery and
   prompt tools backed by the same policy, reliability, and evidence path.
-- Real-tag model discovery and safe Ollama context-window derivation with `num_ctx` injection and delivered-context verification.
+- Deploy-mounted logical route discovery with physical backend names kept
+  behind the proxy boundary, plus backend-derived safe context handling.
 - A bounded in-memory worker queue, response validation, retry, fallback, and per-backend circuit breaking.
 - Context-budget protection and a small self-verification detector for unsupported action claims.
 - Structured logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, Ward correlation metadata, and health endpoints.
@@ -43,8 +44,8 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 
 ## Current request path
 
-1. A harness sends an OpenAI-compatible request and Ward correlation metadata.
-2. Agent Proxy resolves the model, applies context safety and cheap structural checks, and emits operational evidence.
+1. A harness sends a logical `<role>/<intent>` key and Ward correlation metadata.
+2. Agent Proxy validates the route, applies context safety and cheap structural checks, and emits operational evidence.
 3. The current reliability gateway queues and dispatches through the configured inner gateway. Deployments can select direct tower access or authenticated standalone LiteLLM.
 4. Agent Proxy returns the normalized response and emits bounded request evidence.
 5. Future cold-path workers durably ingest and materialize that evidence. They never block the response path.
@@ -91,5 +92,7 @@ with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
 - [`docs/dataset-exports.md`](docs/dataset-exports.md) defines export schemas, manifests, splits, reproducibility, and privacy.
 - [`docs/operational-views.md`](docs/operational-views.md) defines query contracts, Ward dossier boundaries, access, and freshness.
 - [`docs/litellm-parity.md`](docs/litellm-parity.md) records the standalone decision, capability matrix, runner, and cutover blockers.
+- [`docs/route-registry.md`](docs/route-registry.md) defines the mounted logical
+  route contract, startup behavior, and direct rollback.
 - [`docs/work-graph.md`](docs/work-graph.md) links the new dependency-ordered implementation issues.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) explains sequencing without treating future capabilities as prohibited work.

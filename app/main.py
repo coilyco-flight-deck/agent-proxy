@@ -2,12 +2,10 @@
 FastAPI entrypoint: the OpenAI-compatible surface plus health and metrics
 (leg 02 "web server", leg 04 steps 1 and 6).
 
-Every harness points here unchanged. Requests carry the **real ollama tag**
-(``qwen3:4b`` etc.) as ``model``; the proxy resolves it against the backend
-catalog, derives that model's safe ``num_ctx`` from its real ``context_length``,
-guards the context budget, and dispatches through the queue and the resilience
-policies. Responses are shaped to the OpenAI schema so no harness needs special
-handling.
+Every harness points here unchanged. Governed requests carry a logical
+``<role>/<intent>`` route. The proxy validates it against Deploy's mounted
+registry, derives a safe context, and dispatches without adding route metadata
+to model-visible messages.
 """
 
 from __future__ import annotations
@@ -29,7 +27,7 @@ from prometheus_client import CONTENT_TYPE_LATEST
 from . import resilience, upstream
 from .analysis import apply_context_budget
 from .config import get_settings
-from .models import list_tags, resolve
+from .models import RouteUnavailable, list_tags, resolve
 from .skill_use import ingest_skill_use_source
 from .obs import (
     RequestTraceContext,
@@ -37,6 +35,7 @@ from .obs import (
     get_tracer,
     is_trace_bodies_enabled,
     llm_prompt_tokens,
+    llm_route_requests_total,
     llm_requests_total,
     log,
     log_on_span,
@@ -44,6 +43,7 @@ from .obs import (
 )
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed, ContextTruncated
+from .route_registry import initialize_route_registry
 from .trajectory.api import router as trajectory_router
 from .trajectory.request_events import RequestLifecycle, RequestOutcome
 from .trajectory.schema import TrajectoryEvent
@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _trajectory_emitter
     # Best-effort auto-instrumentation; degrades silently if the SDK is absent.
     settings = get_settings()
+    initialize_route_registry()
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
@@ -256,12 +257,14 @@ def _trace_context(
     request_kind: str,
     request_id: str = "",
     *,
+    upstream_mode: str = "",
     extra: dict[str, object] | None = None,
 ) -> RequestTraceContext:
     return RequestTraceContext(
         logical_model=model_name,
         request_model=request_model,
         request_kind=request_kind,
+        upstream_mode=upstream_mode,
         trace_bodies=is_trace_bodies_enabled(),
         request_id=request_id,
         extra=extra or {},
@@ -426,9 +429,16 @@ async def chat_completions(request: Request) -> Response:
 async def _chat_completions(body: dict[str, Any], headers) -> Response:
     requested_model = body.get("model")
     model_name = requested_model if isinstance(requested_model, str) else ""
-    model = await resolve(model_name) if model_name else None
+    try:
+        model = await resolve(model_name) if model_name else None
+    except RouteUnavailable as exc:
+        return _error(503, str(exc), "model_unavailable")
     if model is None:
         return _error(404, f"unknown model '{requested_model}'", "model_not_found")
+    llm_route_requests_total.labels(
+        logical_model=model.name,
+        upstream_mode=model.upstream_mode,
+    ).inc()
 
     messages = body.get("messages") or []
     tools = body.get("tools")
@@ -463,6 +473,7 @@ async def _chat_completions(body: dict[str, Any], headers) -> Response:
         model_name,
         "chat",
         request_id,
+        upstream_mode=model.upstream_mode,
         extra=trace_extra,
     )
     tracer = get_tracer()
@@ -616,9 +627,16 @@ async def completions(request: Request) -> Response:
         return _error(400, "invalid JSON body", "invalid_request_error")
 
     model_name = body.get("model")
-    model = await resolve(model_name) if model_name else None
+    try:
+        model = await resolve(model_name) if model_name else None
+    except RouteUnavailable as exc:
+        return _error(503, str(exc), "model_unavailable")
     if model is None:
         return _error(404, f"unknown model '{model_name}'", "model_not_found")
+    llm_route_requests_total.labels(
+        logical_model=model.name,
+        upstream_mode=model.upstream_mode,
+    ).inc()
 
     prompt = body.get("prompt", "")
     if isinstance(prompt, list):
@@ -650,6 +668,7 @@ async def completions(request: Request) -> Response:
         model_name,
         "completions",
         request_id,
+        upstream_mode=model.upstream_mode,
         extra=trace_extra,
     )
     tracer = get_tracer()

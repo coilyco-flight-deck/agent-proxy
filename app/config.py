@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -138,6 +138,13 @@ class Settings(BaseSettings):
     # an OpenAI-dialect fallback beyond the single built-in tower backend.
     backends_json: str = Field(default="")
     backends_file: str = Field(default="")
+
+    # Deploy mounts a service-local logical route registry. Compatibility mode
+    # preserves the legacy physical-model catalog only for development and an
+    # explicit rollback. Production disables it once a registry is mounted.
+    route_registry_file: str = Field(default="")
+    route_registry_compatibility_mode: bool = Field(default=True)
+    route_upstream_mode: Literal["litellm", "direct"] = Field(default="direct")
 
     def resolved_tower_base_url(self) -> str:
         """The primary ollama base URL, from env, SSM, or a safe local default."""

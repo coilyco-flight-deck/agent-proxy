@@ -28,6 +28,11 @@ from .config import get_settings
 llm_requests_total = Counter(
     "llm_requests_total", "Requests accepted by the proxy", ["logical_model", "outcome"]
 )
+llm_route_requests_total = Counter(
+    "llm_route_requests_total",
+    "Requests resolved through one logical route and upstream mode",
+    ["logical_model", "upstream_mode"],
+)
 llm_queue_depth = Gauge("llm_queue_depth", "Jobs currently waiting in the in-memory queue")
 llm_queue_rejected_total = Counter(
     "llm_queue_rejected_total", "Requests rejected with 429 because the queue was full"
@@ -171,6 +176,7 @@ class RequestTraceContext:
     logical_model: str
     request_model: str
     request_kind: str
+    upstream_mode: str = ""
     trace_bodies: bool = False
     request_id: str = ""
     extra: dict[str, object] = field(default_factory=dict)
@@ -181,6 +187,8 @@ class RequestTraceContext:
             "gen_ai.request.model": self.request_model,
             "agentproxy.request_kind": self.request_kind,
         }
+        if self.upstream_mode:
+            data["agentproxy.upstream_mode"] = self.upstream_mode
         if self.request_id:
             data["agentproxy.request_id"] = self.request_id
         data.update(self.extra)
@@ -204,6 +212,8 @@ def request_log_fields(ctx: RequestTraceContext | None, **fields: object) -> dic
         out["logical_model"] = ctx.logical_model
         out["request_model"] = ctx.request_model
         out["request_kind"] = ctx.request_kind
+        if ctx.upstream_mode:
+            out["upstream_mode"] = ctx.upstream_mode
         if ctx.request_id:
             out["request_id"] = ctx.request_id
         out.update(ctx.extra)

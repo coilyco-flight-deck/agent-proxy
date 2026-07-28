@@ -35,9 +35,10 @@ The hot path is latency-sensitive. It owns only work that must happen before, du
 The hot path never synchronously waits for trajectory materialization, evaluation, training export, bulk body processing, or expensive ML analysis.
 
 The commodity gateway integration is a standalone LiteLLM Proxy, not an
-embedded SDK. Agent Proxy can authenticate from a mounted key file, filter the
-LiteLLM service-key catalog through tower context metadata, forward its safe
-`num_ctx`, and carry body-safe correlation metadata.
+embedded SDK. Agent Proxy authenticates from a mounted key file, validates
+Deploy-owned logical routes, forwards their LiteLLM aliases with a safe
+`num_ctx`, and carries body-safe correlation metadata. Physical model routing
+and fallback stay in LiteLLM configuration.
 [`litellm-parity.md`](litellm-parity.md) records the decision and the live gates
 that must pass before current gateway behavior can retire.
 
@@ -73,8 +74,8 @@ OTLP and SigNoz receive logs, metrics, and traces for live operational visibilit
 
 ## Data and request flow
 
-1. A harness invokes the OpenAI-compatible model surface and supplies available Ward correlation metadata.
-2. Agent Proxy performs identity, policy, correlation, context safety, and cheap structural checks.
+1. A harness invokes the OpenAI-compatible surface with a logical route key and available Ward correlation metadata.
+2. Agent Proxy validates the mounted route, then performs identity, policy, correlation, context safety, and cheap structural checks.
 3. The commodity gateway sends inference work to the selected provider. The current in-repository gateway remains in this role until issue #41 proves LiteLLM parity.
 4. Agent Proxy returns the normalized model result and emits a small versioned operational event without waiting for cold-path processing.
 5. The cold path validates, durably retains, and replays raw events as needed.
@@ -112,7 +113,10 @@ Evaluation is evidence collection and analysis. It does not authorize or execute
 
 ### `app/models.py` - migrate onto LiteLLM
 
-The backend catalog, backend-chain construction, provider dialect selection, and logical routing are commodity gateway concerns that move to LiteLLM after #41 parity. The Agent Proxy-specific safe-context policy and correlation labels remain, but should no longer require this module to own provider routing.
+Physical backend selection, provider dialects, retry, and fallback are
+commodity gateway concerns. Agent Proxy retains logical-route validation,
+backend-derived safe-context policy, correlation labels, and the direct
+rollback adapter. See [`route-registry.md`](route-registry.md).
 
 ### `app/upstream.py` - migrate onto LiteLLM
 

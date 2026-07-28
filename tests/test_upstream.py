@@ -223,6 +223,41 @@ async def test_litellm_backend_authenticates_and_preserves_policy(monkeypatch, t
     assert result.content == "ok"
 
 
+async def test_logical_route_metadata_never_enters_message_content(monkeypatch):
+    backend = Backend(
+        name="litellm",
+        url="http://litellm:4000",
+        ollama_tag="community/knowledge-retrieval",
+        dialect="openai",
+    )
+    fake = _CapturingClient(
+        {
+            "model": "community/knowledge-retrieval",
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+        }
+    )
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+    messages = [{"role": "user", "content": "member question"}]
+
+    await upstream.chat(
+        backend,
+        num_ctx=40960,
+        messages=messages,
+        span_attrs={
+            "agentproxy.logical_model": "community/knowledge-retrieval",
+            "agentproxy.upstream_mode": "litellm",
+            "ward.role": "community",
+        },
+    )
+
+    assert fake.last_body["messages"] == messages
+    assert fake.last_body["metadata"] == {
+        "agentproxy.logical_model": "community/knowledge-retrieval",
+        "agentproxy.upstream_mode": "litellm",
+        "ward.role": "community",
+    }
+
+
 async def test_litellm_stream_authenticates_and_preserves_policy(monkeypatch, tmp_path):
     key_file = tmp_path / "litellm-key"
     key_file.write_text("service-key\n", encoding="utf-8")

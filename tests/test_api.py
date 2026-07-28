@@ -6,6 +6,7 @@ import json
 import pytest
 
 from app import models, resilience, upstream
+from app.route_registry import DirectTarget, Route, RouteRegistry
 from app.upstream import UpstreamResult
 
 # The tags the fake backend advertises (issue #32: real ollama tags pass through).
@@ -79,6 +80,125 @@ def test_list_models(client):
     data = client.get("/v1/models").json()
     ids = {m["id"] for m in data["data"]}
     assert ids == {"qwen3:4b", "qwen3:8b"}
+
+
+def _registry(runtime: str = "ollama") -> RouteRegistry:
+    route = Route(
+        key="community/knowledge-retrieval",
+        upstream_alias="community/knowledge-retrieval",
+        direct=DirectTarget("ornith:35b", runtime),
+    )
+    return RouteRegistry(routes={route.key: route}, source={})
+
+
+def test_logical_catalog_hides_physical_models(client, monkeypatch):
+    monkeypatch.setattr(models, "get_route_registry", _registry)
+
+    data = client.get("/v1/models").json()
+    ids = {model["id"] for model in data["data"]}
+
+    assert ids == {"community/knowledge-retrieval"}
+    assert "ornith:35b" not in ids
+
+
+def test_logical_request_forwards_alias_without_mutating_messages(client, monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "route_upstream_mode", "litellm")
+    monkeypatch.setattr(
+        settings,
+        "backends_json",
+        json.dumps(
+            [
+                {
+                    "name": "litellm",
+                    "url": "http://litellm:4000",
+                    "dialect": "openai",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(models, "get_route_registry", _registry)
+
+    async def fake_tower_catalog(_base_url):
+        return {"ornith:35b": 65536}, True
+
+    captured = {}
+
+    async def fake_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        captured["model"] = backend.ollama_tag
+        captured["messages"] = messages
+        captured["span_attrs"] = span_attrs
+        return UpstreamResult(model=backend.ollama_tag, content="routed")
+
+    monkeypatch.setattr(models, "_ollama_catalog", fake_tower_catalog)
+    monkeypatch.setattr(upstream, "chat", fake_chat)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "community/knowledge-retrieval",
+            "messages": [{"role": "user", "content": "retrieve this"}],
+            "metadata": {"ward.role": "community"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model"] == "community/knowledge-retrieval"
+    assert captured["model"] == "community/knowledge-retrieval"
+    assert captured["messages"] == [{"role": "user", "content": "retrieve this"}]
+    assert captured["span_attrs"]["agentproxy.upstream_mode"] == "litellm"
+
+
+def test_unsupported_direct_route_fails_closed(client, monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "route_upstream_mode", "direct")
+    monkeypatch.setattr(settings, "backends_json", "")
+    monkeypatch.setattr(models, "get_route_registry", lambda: _registry("llama.cpp"))
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "community/knowledge-retrieval",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "model_unavailable"
+    assert "gpt-oss" not in response.text
+    assert "llama.cpp" not in response.text
+
+
+def test_unknown_logical_route_is_not_found(client, monkeypatch):
+    monkeypatch.setattr(models, "get_route_registry", _registry)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "community/not-a-lane", "messages": []},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["type"] == "model_not_found"
+
+
+def test_disabled_logical_route_is_unavailable(client, monkeypatch):
+    route = Route(
+        key="community/knowledge-retrieval",
+        upstream_alias="community/knowledge-retrieval",
+        direct=DirectTarget("ornith:35b", "ollama"),
+        enabled=False,
+    )
+    registry = RouteRegistry(routes={route.key: route}, source={})
+    monkeypatch.setattr(models, "get_route_registry", lambda: registry)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": route.key, "messages": []},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["message"] == (
+        "route 'community/knowledge-retrieval' is disabled"
+    )
 
 
 def _mcp_post(client, method, params=None, request_id=1):

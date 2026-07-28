@@ -6,7 +6,9 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
 
 ## Current baseline
 
-- The current service is an OpenAI-compatible reliability gateway with real-tag context protection, queueing, validation, retries, fallbacks, circuit breaking, and operational telemetry.
+- The current service is an OpenAI-compatible reliability gateway with logical
+  route validation, context protection, queueing, validation, retries,
+  fallbacks, circuit breaking, and operational telemetry.
 - The request path remains stateless except for its in-memory queue and caches.
 - Ward correlation metadata reaches logs and traces.
 - Skill-use artifact ingestion durably retains contract-v1 observations and

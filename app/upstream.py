@@ -52,6 +52,7 @@ _client: httpx.AsyncClient | None = None
 
 _CORRELATION_METADATA_KEYS = (
     "agentproxy.logical_model",
+    "agentproxy.upstream_mode",
     "agentproxy.request_kind",
     "agentproxy.request_id",
     "ward.run_id",

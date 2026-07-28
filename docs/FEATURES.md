@@ -14,7 +14,11 @@ Status legend:
   exposes model discovery and non-streaming prompt tools through the existing
   Agent Proxy policy, reliability, telemetry, and trajectory path. See
   [mcp.md](mcp.md).
-- **Real-tag context safety** - landed - backend catalog discovery, safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
+- **Logical route registry** - landed - strict Deploy-mounted logical lanes hide
+  physical backends from governed clients, route aliases through LiteLLM, and
+  fail closed when direct rollback cannot serve a runtime. See
+  [route-registry.md](route-registry.md).
+- **Backend-derived context safety** - landed - safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
 - **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.
 - **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, request spans, and opt-in trace-body capture.
 - **Ward correlation** - landed - request, Ward run, workflow, repository, issue, and agent-session metadata joins in logs and spans.
@@ -58,5 +62,6 @@ Status legend:
 - [`dataset-exports.md`](dataset-exports.md) documents schemas, manifests, split safety, and reproducibility.
 - [`operational-views.md`](operational-views.md) documents queries, dossiers, access, freshness, and backfill.
 - [`litellm-parity.md`](litellm-parity.md) documents the standalone decision and cutover gates.
+- [`route-registry.md`](route-registry.md) documents logical routing and rollback.
 - [`ROADMAP.md`](ROADMAP.md) and [`work-graph.md`](work-graph.md) define execution order.
 - [`proxy.md`](proxy.md) remains the detailed guide to the currently landed reliability behavior.

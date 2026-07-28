@@ -8,16 +8,13 @@ here - see the source-of-truth pointers in the README.
 
 ## Request path
 
-A harness sends an OpenAI-shaped request carrying the **real ollama tag** (e.g.
-`qwen3:4b`) as `model` - no logical indirection (issue #32). The proxy:
+A governed harness sends an OpenAI-shaped request carrying a logical
+`<role>/<intent>` key as `model`. The proxy:
 
-1. **resolves** the tag against the backend catalog (`app/models.py`): it reads
-   the backend's `/api/tags` once (cached), confirms the tag exists, and derives
-   a safe `num_ctx = min(context_length, ceiling) - headroom` from the model's
-   *real* `context_length`. An unknown tag (absent from a catalog it read) is a
-   404; if the backend is unreachable the tag is served fail-open with a
-   conservative window so a transient outage surfaces as a 502, not a false 404.
-   The ordered backend chain (tower plus any configured fallbacks) rides along.
+1. **resolves** the key against Deploy's mounted registry (`app/models.py`).
+   LiteLLM mode sends the configured alias. Direct rollback sends a supported
+   physical target and fails closed for an unsupported runtime. Backend context
+   metadata derives `num_ctx = min(context_length, ceiling) - headroom`.
 2. **guards the context budget** (`app/analysis.py`): counts prompt tokens and,
    if the prompt exceeds `num_ctx - headroom`, trims the oldest non-system turns,
    always keeping the system framing and the live turn. Increments
@@ -74,8 +71,7 @@ and traces.
 * `POST /v1/chat/completions` - streaming and non-streaming.
 * `POST /v1/completions` - modeled as a single user turn so it rides the same
   resilience path.
-* `GET /v1/models` - lists the tags actually present on the backend (live from
-  `/api/tags`), not a static alias list.
+* `GET /v1/models` - lists enabled logical route keys and hides physical models.
 * `GET /healthz` - liveness for Caddy / k8s probes.
 * `GET /metrics` - prometheus exposition.
 
@@ -128,9 +124,12 @@ secret is committed. Key knobs:
 * `PROXY_FAIL_ON_CONTEXT_TRUNCATION` - when set, a detected short-context delivery
   502s loud instead of returning the marked short read (default **off**).
 * `PROXY_BACKENDS_JSON` / `PROXY_BACKENDS_FILE` - a JSON array of backend specs
-  (`{"name","url","dialect"?,"chat_path"?,"num_parallel"?,...}`, no tag - the tag
-  comes from the request) to supply a fallback chain beyond the single built-in
-  tower backend.
+  (`{"name","url","dialect"?,"chat_path"?,"num_parallel"?,...}`) that supplies
+  transport endpoints separately from logical route data.
+* `PROXY_ROUTE_REGISTRY_FILE` - the Deploy-mounted logical route registry.
+* `PROXY_ROUTE_UPSTREAM_MODE` - `litellm` for aliases or `direct` for rollback.
+* `PROXY_ROUTE_REGISTRY_COMPATIBILITY_MODE` - permits the legacy physical tag
+  catalog only when no registry path is configured. Production disables it.
 * `PROXY_WORKER_COUNT`, `PROXY_QUEUE_MAXSIZE` - queue / worker sizing.
 * `PROXY_MAX_RETRIES`, `PROXY_CIRCUIT_FAIL_THRESHOLD`, `PROXY_CIRCUIT_COOLDOWN` -
   resilience knobs.
@@ -147,7 +146,7 @@ secret is committed. Key knobs:
   defaults off until `PROXY_TRAJECTORY_DB_PATH` points at durable mounted
   storage.
 
-### Auto num_ctx from the model's real context window
+### Auto num_ctx from the backend's real context window
 
 The proxy no longer guesses `num_ctx` from a hand-maintained table (issue #32).
 Ollama's `/api/tags` reports each model's real `context_length` in
@@ -204,7 +203,7 @@ ward exec sync                                             # uv sync (installs a
 PROXY_TOWER_BASE_URL=http://<tower>:11434 ward exec serve  # proxy on 127.0.0.1:8080
 ward exec test                                             # offline suite, tower not required
 
-# with the proxy running and a tower reachable (pass a real ollama tag via MODEL):
+# compatibility-mode proof with the proxy and tower reachable:
 TOWER=<tower> MODEL=qwen3-coder:30b ward exec proof        # 32767 (direct) vs num_ctx-injected (proxy)
 TOWER=<tower> MODEL=qwen3-coder:30b ward exec reliability -- --target both --turns 6 --json reliability.json
 ```
