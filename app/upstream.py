@@ -41,11 +41,38 @@ class UpstreamResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     prompt_eval_count: int = 0
     eval_count: int = 0
+    total_duration: int = 0
+    load_duration: int = 0
+    prompt_eval_duration: int = 0
+    eval_duration: int = 0
     done_reason: str = "stop"
     # Set by dispatch (issue #33) when the backend delivered a shorter context than
     # asked for - the OLLAMA_NUM_PARALLEL division. Surfaced loud, never silent.
     context_truncated: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
+
+    def ollama_measurements_ms(self) -> dict[str, float]:
+        """Return bounded provider timings from Ollama's final response."""
+
+        values = {
+            "ollama.total_duration_ms": self.total_duration,
+            "ollama.load_duration_ms": self.load_duration,
+            "ollama.prompt_eval_duration_ms": self.prompt_eval_duration,
+            "ollama.eval_duration_ms": self.eval_duration,
+        }
+        return {name: value / 1_000_000 for name, value in values.items() if value > 0}
+
+
+def set_result_span_attributes(span: Any, result: UpstreamResult) -> None:
+    """Attach normalized usage plus any Ollama-native final-response timings."""
+
+    span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
+    span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+    span.set_attribute(
+        "response.finish_reasons", [result.done_reason] if result.done_reason else []
+    )
+    for name, value in result.ollama_measurements_ms().items():
+        span.set_attribute(name, value)
 
 
 _client: httpx.AsyncClient | None = None
@@ -228,9 +255,22 @@ def _parse_chat_response(data: dict[str, Any]) -> UpstreamResult:
         tool_calls=message.get("tool_calls", []) or [],
         prompt_eval_count=int(data.get("prompt_eval_count", 0) or 0),
         eval_count=int(data.get("eval_count", 0) or 0),
+        total_duration=int(data.get("total_duration", 0) or 0),
+        load_duration=int(data.get("load_duration", 0) or 0),
+        prompt_eval_duration=int(data.get("prompt_eval_duration", 0) or 0),
+        eval_duration=int(data.get("eval_duration", 0) or 0),
         done_reason=data.get("done_reason", "stop") or "stop",
         raw=data,
     )
+
+
+def parse_stream_result(data: dict[str, Any], fallback_model: str = "") -> UpstreamResult:
+    """Normalize one terminal stream chunk without requiring response content."""
+
+    result = _parse_chat_response(data)
+    if not result.model:
+        result.model = fallback_model
+    return result
 
 
 def _parse_openai_chat_response(data: dict[str, Any]) -> UpstreamResult:
@@ -320,11 +360,7 @@ async def chat(
             if backend.dialect == "ollama"
             else _parse_openai_chat_response(resp.json())
         )
-        span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
-        span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-        span.set_attribute(
-            "response.finish_reasons", [result.done_reason] if result.done_reason else []
-        )
+        set_result_span_attributes(span, result)
         log.info(
             "upstream.completed",
             **_correlation_log_fields(span_attrs),
@@ -365,6 +401,7 @@ async def chat_stream(
     if span_attrs:
         attrs.update(span_attrs)
     span_cm = tracer.start_as_current_span("upstream.chat_stream") if tracer else None
+    terminal_result: UpstreamResult | None = None
     try:
         if span_cm is not None:
             span = span_cm.__enter__()
@@ -389,6 +426,8 @@ async def chat_stream(
                     except json.JSONDecodeError:
                         continue
                 if backend.dialect == "ollama":
+                    if payload.get("done"):
+                        terminal_result = parse_stream_result(payload, backend.ollama_tag)
                     yield payload
                     continue
                 choice = (payload.get("choices") or [{}])[0]
@@ -406,7 +445,23 @@ async def chat_stream(
                 }
                 if choice.get("finish_reason"):
                     out["done_reason"] = choice.get("finish_reason")
+                    usage = payload.get("usage") or {}
+                    if payload.get("model"):
+                        out["model"] = payload["model"]
+                    if usage:
+                        out["prompt_eval_count"] = int(usage.get("prompt_tokens", 0) or 0)
+                        out["eval_count"] = int(usage.get("completion_tokens", 0) or 0)
+                    terminal_result = UpstreamResult(
+                        model=str(payload.get("model") or backend.ollama_tag),
+                        content="",
+                        prompt_eval_count=int(usage.get("prompt_tokens", 0) or 0),
+                        eval_count=int(usage.get("completion_tokens", 0) or 0),
+                        done_reason=str(out["done_reason"]),
+                        raw=payload,
+                    )
                 yield out
+        if span_cm is not None and terminal_result is not None:
+            set_result_span_attributes(span, terminal_result)
         log.info(
             "upstream.completed",
             **_correlation_log_fields(span_attrs),
@@ -468,6 +523,10 @@ async def generate(
             content=data.get("response", "") or "",
             prompt_eval_count=int(data.get("prompt_eval_count", 0) or 0),
             eval_count=int(data.get("eval_count", 0) or 0),
+            total_duration=int(data.get("total_duration", 0) or 0),
+            load_duration=int(data.get("load_duration", 0) or 0),
+            prompt_eval_duration=int(data.get("prompt_eval_duration", 0) or 0),
+            eval_duration=int(data.get("eval_duration", 0) or 0),
             done_reason=data.get("done_reason", "stop") or "stop",
             raw=data,
         )

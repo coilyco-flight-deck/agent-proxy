@@ -20,7 +20,7 @@ Status legend:
   [route-registry.md](route-registry.md).
 - **Backend-derived context safety** - landed - safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
 - **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.
-- **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, request spans, and opt-in trace-body capture.
+- **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, request spans, opt-in trace-body capture, and Ollama final-response token plus phase-duration measurements for streaming and non-streaming requests.
 - **Ward correlation** - landed - request, Ward run, workflow, repository, issue, and agent-session metadata joins in logs and spans.
 - **Skill-use artifact observation** - landed - Ward reap `skill-usage.json`
   parsing durably retains metadata-only skill observations with run and

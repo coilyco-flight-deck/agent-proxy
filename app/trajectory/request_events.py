@@ -86,6 +86,16 @@ class RequestLifecycle:
             "ward.role": _text(self.trace_context.extra.get("ward.role")),
         }
 
+    def _terminal_attributes(
+        self, outcome: RequestOutcome, result: UpstreamResult | None
+    ) -> dict[str, object]:
+        attributes = {**self._attributes(), "agentproxy.request.outcome": outcome}
+        if result is not None:
+            attributes.update(result.ollama_measurements_ms())
+            attributes["gen_ai.usage.input_tokens"] = result.prompt_eval_count
+            attributes["gen_ai.usage.output_tokens"] = result.eval_count
+        return attributes
+
     def action_event(self) -> TrajectoryEvent:
         """Build the metadata-only proposed model-request event."""
 
@@ -141,7 +151,7 @@ class RequestLifecycle:
             event_type="execution.completed" if succeeded else "execution.failed",
             occurred_at=datetime.now(timezone.utc),
             idempotency_key=f"{self.execution_ref}:terminal",
-            attributes={**self._attributes(), "agentproxy.request.outcome": outcome},
+            attributes=self._terminal_attributes(outcome, result),
             payload={
                 "execution_id": self.execution_ref,
                 "executor_ref": "agent-proxy.current-gateway",

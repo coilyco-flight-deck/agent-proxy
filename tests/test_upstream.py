@@ -109,7 +109,16 @@ def openai_backend():
 
 async def test_num_ctx_is_injected(monkeypatch, backend):
     fake = _CapturingClient(
-        {"model": "m", "message": {"content": "hi"}, "prompt_eval_count": 49151}
+        {
+            "model": "m",
+            "message": {"content": "hi"},
+            "prompt_eval_count": 49151,
+            "eval_count": 7,
+            "total_duration": 2_000_000_000,
+            "load_duration": 100_000_000,
+            "prompt_eval_duration": 500_000_000,
+            "eval_duration": 1_400_000_000,
+        }
     )
     monkeypatch.setattr(upstream, "get_client", lambda: fake)
 
@@ -122,6 +131,12 @@ async def test_num_ctx_is_injected(monkeypatch, backend):
     assert fake.last_body["model"] == "qwen3:30b-a3b"
     assert result.prompt_eval_count == 49151
     assert result.content == "hi"
+    assert result.ollama_measurements_ms() == {
+        "ollama.total_duration_ms": 2000.0,
+        "ollama.load_duration_ms": 100.0,
+        "ollama.prompt_eval_duration_ms": 500.0,
+        "ollama.eval_duration_ms": 1400.0,
+    }
 
 
 async def test_caller_cannot_override_num_ctx(monkeypatch, backend):
@@ -299,6 +314,37 @@ async def test_litellm_stream_authenticates_and_preserves_policy(monkeypatch, tm
         {"message": {"content": "hi"}, "done": False},
         {"message": {}, "done": True, "done_reason": "stop"},
     ]
+
+
+async def test_ollama_stream_captures_final_usage_and_durations(monkeypatch, backend):
+    spans = []
+    fake = _StreamingClient(
+        [
+            '{"message":{"content":"hi"},"done":false}',
+            '{"model":"qwen3:30b-a3b","message":{},"done":true,'
+            '"done_reason":"stop","prompt_eval_count":12,"eval_count":3,'
+            '"total_duration":2000000000,"load_duration":100000000,'
+            '"prompt_eval_duration":500000000,"eval_duration":1400000000}',
+        ]
+    )
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+    monkeypatch.setattr(upstream, "get_tracer", lambda: _Tracer(spans))
+
+    chunks = [
+        chunk
+        async for chunk in upstream.chat_stream(
+            backend,
+            num_ctx=48128,
+            messages=[{"role": "user", "content": "x"}],
+        )
+    ]
+
+    assert chunks[-1]["done"] is True
+    attrs = spans[-1][1]
+    assert attrs["gen_ai.usage.input_tokens"] == 12
+    assert attrs["gen_ai.usage.output_tokens"] == 3
+    assert attrs["ollama.total_duration_ms"] == 2000.0
+    assert attrs["ollama.eval_duration_ms"] == 1400.0
 
 
 async def test_missing_litellm_key_fails_without_secret_or_path(monkeypatch, tmp_path):

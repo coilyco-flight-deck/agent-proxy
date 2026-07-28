@@ -37,6 +37,7 @@ from .obs import (
     llm_circuit_state,
     llm_context_truncated_total,
     llm_fallbacks_total,
+    llm_ollama_duration_seconds,
     llm_retries_total,
     llm_upstream_latency_seconds,
     llm_validation_failures_total,
@@ -46,6 +47,20 @@ from .obs import (
 )
 from . import upstream
 from .upstream import UpstreamError, UpstreamResult
+
+
+def _observe_ollama_measurements(
+    logical_model: str, backend: Backend, result: UpstreamResult
+) -> None:
+    if backend.dialect != "ollama":
+        return
+    for name, milliseconds in result.ollama_measurements_ms().items():
+        phase = name.removeprefix("ollama.").removesuffix("_duration_ms")
+        llm_ollama_duration_seconds.labels(
+            logical_model=logical_model,
+            backend=backend.name,
+            phase=phase,
+        ).observe(milliseconds / 1000)
 
 
 class AllBackendsFailed(Exception):
@@ -348,6 +363,7 @@ async def dispatch(
                     llm_upstream_latency_seconds.labels(
                         logical_model=model.name, backend=backend.name
                     ).observe(_now() - start)
+                    _observe_ollama_measurements(model.name, backend, result)
                     if attempt_span is not None:
                         attempt_span.set_attribute(
                             "gen_ai.usage.input_tokens", result.prompt_eval_count
@@ -532,6 +548,9 @@ async def dispatch_stream(
             ):
                 if first:
                     first = False
+                if chunk.get("done"):
+                    result = upstream.parse_stream_result(chunk, backend.ollama_tag)
+                    _observe_ollama_measurements(model.name, backend, result)
                 yield chunk
             breakers.record_success(backend)
             return

@@ -43,6 +43,8 @@ def test_request_lifecycle_emits_correlated_metadata_without_bodies():
             content="private response",
             prompt_eval_count=12,
             eval_count=3,
+            total_duration=42_000_000,
+            eval_duration=30_000_000,
             done_reason="stop",
         ),
         latency_ms=42,
@@ -52,6 +54,9 @@ def test_request_lifecycle_emits_correlated_metadata_without_bodies():
     assert completed.event_type == "execution.completed"
     assert completed.payload.model_execution.total_tokens == 15
     assert completed.payload.model_execution.latency_ms == 42
+    assert completed.attributes["ollama.total_duration_ms"] == 42.0
+    assert completed.attributes["ollama.eval_duration_ms"] == 30.0
+    assert completed.attributes["gen_ai.usage.input_tokens"] == 12
     assert completed.correlation.ward_run_id == "fixture-run"
     assert completed.correlation.repository == "coilyco-flight-deck/agent-proxy"
     assert completed.actor.role == "engineer"

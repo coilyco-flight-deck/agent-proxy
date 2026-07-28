@@ -75,6 +75,11 @@ llm_prompt_tokens = Histogram(
 llm_upstream_latency_seconds = Histogram(
     "llm_upstream_latency_seconds", "Upstream generation latency", ["logical_model", "backend"]
 )
+llm_ollama_duration_seconds = Histogram(
+    "llm_ollama_duration_seconds",
+    "Ollama final-response duration by generation phase",
+    ["logical_model", "backend", "phase"],
+)
 
 
 def metrics_text() -> bytes:

@@ -137,6 +137,10 @@ secret is committed. Key knobs:
   degrade to no-ops when unset.
 * `PROXY_TRACE_BODIES` - opt-in request/response body capture for local OTLP
   backends. Defaults to off so exported spans and logs stay metadata-only.
+  This operational trace capture does not replace the governed trajectory
+  content store. Prompts and responses are foundational trajectory evidence,
+  but durable restricted-body storage remains separately access-controlled and
+  referenced by `content.body_ref`.
 * `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
   or a single `skill-usage.json` artifact. When set, the proxy ingests it at
   startup, durably retains metadata-only trajectory observations, and increments

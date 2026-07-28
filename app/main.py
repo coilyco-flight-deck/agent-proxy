@@ -353,6 +353,7 @@ async def _stream_chat(
         yield f"data: {json.dumps(first)}\n\n"
         finish = "stop"
         outcome = "ok"
+        terminal_result: upstream.UpstreamResult | None = None
         terminal_span = request_span
         try:
             if tracer is None:
@@ -372,6 +373,7 @@ async def _stream_chat(
                         yield f"data: {json.dumps(delta)}\n\n"
                     if chunk.get("done"):
                         finish = "length" if chunk.get("done_reason") == "length" else "stop"
+                        terminal_result = upstream.parse_stream_result(chunk, model_name)
             else:
                 with tracer.start_as_current_span("request.chat") as span:
                     terminal_span = span
@@ -393,6 +395,8 @@ async def _stream_chat(
                             yield f"data: {json.dumps(delta)}\n\n"
                         if chunk.get("done"):
                             finish = "length" if chunk.get("done_reason") == "length" else "stop"
+                            terminal_result = upstream.parse_stream_result(chunk, model_name)
+                            upstream.set_result_span_attributes(span, terminal_result)
         except AllBackendsFailed as exc:
             log.warning("stream.failed", **trace_ctx.attrs(), error=str(exc), outcome="failed")
             finish = "stop"
@@ -407,6 +411,7 @@ async def _stream_chat(
             lifecycle,
             "succeeded" if outcome == "ok" else "stream_failed",
             started=started,
+            result=terminal_result,
         )
         final = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
         yield f"data: {json.dumps(final)}\n\n"
