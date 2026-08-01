@@ -4,6 +4,10 @@ these run without the tower."""
 import json
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import SpanKind
 
 from app import models, resilience, upstream
 from app.route_registry import DirectTarget, Route, RouteRegistry
@@ -427,6 +431,39 @@ def test_chat_completion_uses_tracing(client, monkeypatch):
     assert resp.status_code == 200
     assert any(name == "request.chat" for name, _ in spans)
     assert ("request.chat", "request.completed") in terminal_logs
+
+
+def test_chat_completion_preserves_remote_trace_context(client):
+    exporter = InMemorySpanExporter()
+    provider = trace.get_tracer_provider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    remote_trace_id = "1234567890abcdef1234567890abcdef"
+    remote_span_id = "1234567890abcdef"
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "messages": [{"role": "user", "content": "capital of France?"}],
+        },
+        headers={"traceparent": f"00-{remote_trace_id}-{remote_span_id}-01"},
+    )
+
+    assert response.status_code == 200
+    spans = exporter.get_finished_spans()
+    server_span = next(
+        span
+        for span in spans
+        if span.kind is SpanKind.SERVER
+        and span.attributes.get("http.route") == "/v1/chat/completions"
+    )
+    request_span = next(span for span in spans if span.name == "request.chat")
+    assert f"{server_span.context.trace_id:032x}" == remote_trace_id
+    assert request_span.context.trace_id == server_span.context.trace_id
+    assert request_span.parent.span_id == server_span.context.span_id
+    assert server_span.parent.span_id == int(remote_span_id, 16)
+    assert "agentproxy.messages" not in request_span.attributes
+    assert "agentproxy.tools" not in request_span.attributes
 
 
 def test_chat_completion_ingests_ward_headers(client, monkeypatch):

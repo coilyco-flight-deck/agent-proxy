@@ -51,6 +51,12 @@ the current lowercase hexadecimal `trace_id` and `span_id`. The ser8 SigNoz
 which enables the traces-to-logs jump without duplicating log export in the
 request path. Logs outside a valid span omit both fields.
 
+FastAPI instrumentation is installed while the application is assembled,
+before Starlette freezes its middleware stack. The HTTP server span extracts
+the caller's W3C `traceparent`, and `request.chat` or `request.completions`
+continues beneath it. HTTPX then carries that same context into LiteLLM. Body
+capture remains off unless `PROXY_TRACE_BODIES` is explicitly enabled.
+
 * `x-request-id` or `metadata.request_id` - `agentproxy.request_id`
 * `x-ward-run-id` or `metadata.ward.run_id` - `ward.run_id`
 * `x-ward-container-name` or `metadata.ward.container_name` - `ward.container_name`

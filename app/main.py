@@ -88,15 +88,8 @@ mcp_server = FastMCP(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _trajectory_emitter
-    # Best-effort auto-instrumentation; degrades silently if the SDK is absent.
     settings = get_settings()
     initialize_route_registry()
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        FastAPIInstrumentor.instrument_app(app)
-    except Exception:
-        pass
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
@@ -132,6 +125,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="agent-proxy", lifespan=lifespan)
 app.include_router(trajectory_router)
+
+
+def _instrument_fastapi(application: FastAPI) -> None:
+    """Install inbound tracing before Starlette freezes the middleware stack."""
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor.instrument_app(application)
+    except Exception:
+        # Observability remains best-effort and must never block process startup.
+        pass
+
+
+_instrument_fastapi(app)
 
 
 # --------------------------------------------------------------------------- #
