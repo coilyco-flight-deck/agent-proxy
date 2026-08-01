@@ -1,19 +1,24 @@
 """Tests for observability wiring helpers."""
 
 import json
+import logging
 
 import pytest
 
 from app.obs import (
     InstrumentedAction,
+    _HealthNoiseFilter,
     _add_trace_context,
     _otlp_http_traces_url,
+    _sentry_before_breadcrumb,
+    _sentry_before_send,
     emit_instrumented_action,
     get_current_trace_span,
     get_logger,
     init_sentry,
     log_on_span,
     metrics_text,
+    suppress_health_observability,
 )
 
 
@@ -46,6 +51,37 @@ def test_get_logger_emits_json(capsys):
     payload = json.loads(line)
     assert payload["event"] == "hello"
     assert payload["k"] == 1
+
+
+def test_health_suppression_drops_structured_logs(capsys):
+    with suppress_health_observability():
+        get_logger("t").info("must-not-emit")
+
+    assert capsys.readouterr().out == ""
+
+
+def test_health_noise_filter_drops_access_records():
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1", "GET", "/readyz/community/route", "1.1", 200),
+        None,
+    )
+
+    assert _HealthNoiseFilter().filter(record) is False
+
+
+def test_sentry_filters_health_urls_and_suppressed_dependencies():
+    assert _sentry_before_send({"request": {"url": "http://proxy/healthz"}}, {}) is None
+    assert (
+        _sentry_before_breadcrumb({"data": {"url": "http://proxy/readyz/community/route"}}, {})
+        is None
+    )
+    with suppress_health_observability():
+        assert _sentry_before_send({"request": {"url": "http://litellm/v1/models"}}, {}) is None
 
 
 def test_get_logger_adds_active_trace_context(monkeypatch, capsys):
@@ -175,6 +211,9 @@ def test_metrics_text_exposes_leg04_names():
         b"llm_circuit_state",
         b"llm_truncation_avoided_total",
         b"ward_skill_use_total",
+        b"agent_proxy_health_endpoint_requests_total",
+        b"agent_proxy_readiness_checks_total",
+        b"agent_proxy_route_ready",
     ):
         assert name in text
 

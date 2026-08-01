@@ -30,7 +30,9 @@ from .config import get_settings
 from .models import RouteUnavailable, list_tags, resolve
 from .skill_use import ingest_skill_use_source
 from .obs import (
+    HEALTH_TRACE_EXCLUDED_URLS,
     RequestTraceContext,
+    agent_proxy_health_endpoint_requests_total,
     get_current_trace_span,
     get_tracer,
     is_trace_bodies_enabled,
@@ -41,6 +43,7 @@ from .obs import (
     log_on_span,
     metrics_text,
 )
+from .readiness import UnknownRoute, check_route_readiness
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed, ContextTruncated
 from .route_registry import initialize_route_registry
@@ -132,7 +135,10 @@ def _instrument_fastapi(application: FastAPI) -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument_app(application)
+        FastAPIInstrumentor.instrument_app(
+            application,
+            excluded_urls=HEALTH_TRACE_EXCLUDED_URLS,
+        )
     except Exception:
         # Observability remains best-effort and must never block process startup.
         pass
@@ -148,11 +154,35 @@ _instrument_fastapi(app)
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
+    agent_proxy_health_endpoint_requests_total.labels(endpoint="healthz", outcome="ready").inc()
     return {"status": "ok"}
+
+
+@app.get("/readyz/{role}/{intent}")
+async def readyz(role: str, intent: str) -> JSONResponse:
+    logical_route = f"{role}/{intent}"
+    try:
+        result = await check_route_readiness(logical_route)
+    except UnknownRoute:
+        agent_proxy_health_endpoint_requests_total.labels(
+            endpoint="readyz", outcome="unknown_route"
+        ).inc()
+        return JSONResponse(status_code=404, content={"status": "unknown_route"})
+    content: dict[str, Any] = {
+        "status": "ready" if result.ready else "not_ready",
+        "route": result.route,
+    }
+    if result.failed_checks:
+        content["failed_checks"] = list(result.failed_checks)
+    agent_proxy_health_endpoint_requests_total.labels(
+        endpoint="readyz", outcome="ready" if result.ready else "not_ready"
+    ).inc()
+    return JSONResponse(status_code=200 if result.ready else 503, content=content)
 
 
 @app.get("/metrics")
 async def metrics() -> Response:
+    agent_proxy_health_endpoint_requests_total.labels(endpoint="metrics", outcome="served").inc()
     return Response(content=metrics_text(), media_type=CONTENT_TYPE_LATEST)
 
 

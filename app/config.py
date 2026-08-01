@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     request_timeout: float = Field(
         default=600.0, description="Per-backend upstream timeout seconds"
     )
+    readiness_timeout: float = Field(
+        default=3.0,
+        gt=0.0,
+        description="Per-dependency timeout for non-generating route readiness checks",
+    )
 
     # Context-budget headroom reserved for the completion (leg 04 step 5).
     num_ctx_headroom: int = Field(default=1024)

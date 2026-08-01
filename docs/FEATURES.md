@@ -46,7 +46,12 @@ Status legend:
   audit rows into action, policy, and execution events, and hash specgen
   guardfiles and locks into linked policy evidence without retaining sensitive
   argv, diagnostics, paths, or hosts. See [guard-ingestion.md](guard-ingestion.md).
-- **Runtime and delivery checks** - landed - SSM-backed configuration, `/healthz`, `/metrics`, daemonless boot probing, container probing, CI quality checks, and a reliability harness.
+- **Runtime and delivery checks** - landed - SSM-backed configuration, local
+  `/healthz`, metrics-only non-generating route readiness, `/metrics`,
+  daemonless boot probing, container probing, and a reliability harness. Route
+  readiness verifies configured LiteLLM and Ollama control surfaces without
+  claiming that GPU execution or completion validity was proven. See
+  [readiness.md](readiness.md).
 
 ## Planned architecture v2
 

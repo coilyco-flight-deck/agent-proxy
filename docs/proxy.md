@@ -79,6 +79,8 @@ and traces.
   resilience path.
 * `GET /v1/models` - lists enabled logical route keys and hides physical models.
 * `GET /healthz` - liveness for Caddy / k8s probes.
+* `GET /readyz/{role}/{intent}` - non-generating structural readiness for one
+  governed logical route. See [readiness.md](readiness.md).
 * `GET /metrics` - prometheus exposition.
 
 ## Validation
@@ -136,6 +138,8 @@ secret is committed. Key knobs:
 * `PROXY_ROUTE_UPSTREAM_MODE` - `litellm` for aliases or `direct` for rollback.
 * `PROXY_ROUTE_REGISTRY_COMPATIBILITY_MODE` - permits the legacy physical tag
   catalog only when no registry path is configured. Production disables it.
+* `PROXY_READINESS_TIMEOUT` - per-dependency timeout for non-generating route
+  readiness checks. The default is 3 seconds.
 * `PROXY_WORKER_COUNT`, `PROXY_QUEUE_MAXSIZE` - queue / worker sizing.
 * `PROXY_MAX_RETRIES`, `PROXY_CIRCUIT_FAIL_THRESHOLD`, `PROXY_CIRCUIT_COOLDOWN` -
   resilience knobs.

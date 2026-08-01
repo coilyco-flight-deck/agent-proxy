@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import logging
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable, MutableMapping
+from typing import Any, Callable, Iterator, MutableMapping
+from urllib.parse import urlsplit
 
 import structlog
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
@@ -80,6 +83,95 @@ llm_ollama_duration_seconds = Histogram(
     "Ollama final-response duration by generation phase",
     ["logical_model", "backend", "phase"],
 )
+agent_proxy_readiness_checks_total = Counter(
+    "agent_proxy_readiness_checks_total",
+    "Non-generating route readiness checks",
+    ["check", "outcome"],
+)
+agent_proxy_readiness_check_duration_seconds = Histogram(
+    "agent_proxy_readiness_check_duration_seconds",
+    "Non-generating route readiness check duration",
+    ["check"],
+)
+agent_proxy_route_ready = Gauge(
+    "agent_proxy_route_ready",
+    "Whether a governed logical route is structurally ready without inference",
+    ["logical_route"],
+)
+agent_proxy_readiness_last_success_timestamp_seconds = Gauge(
+    "agent_proxy_readiness_last_success_timestamp_seconds",
+    "Unix timestamp of the last successful non-generating readiness check",
+    ["check"],
+)
+agent_proxy_health_endpoint_requests_total = Counter(
+    "agent_proxy_health_endpoint_requests_total",
+    "Metrics-only health endpoint responses",
+    ["endpoint", "outcome"],
+)
+
+
+HEALTH_TRACE_EXCLUDED_URLS = "healthz,readyz,metrics"
+_HEALTH_PATH_PREFIXES = ("/healthz", "/readyz", "/metrics")
+_health_observability_suppressed: ContextVar[bool] = ContextVar(
+    "agent_proxy_health_observability_suppressed", default=False
+)
+
+
+def _is_health_path(value: str) -> bool:
+    try:
+        path = urlsplit(value).path
+    except ValueError:
+        path = value.split("?", 1)[0]
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in _HEALTH_PATH_PREFIXES)
+
+
+def _record_contains_health_path(record: logging.LogRecord) -> bool:
+    values: list[str] = []
+    if isinstance(record.args, tuple):
+        values.extend(value for value in record.args if isinstance(value, str))
+    elif isinstance(record.args, dict):
+        values.extend(value for value in record.args.values() if isinstance(value, str))
+    values.append(record.getMessage())
+    return any(_is_health_path(value) for value in values)
+
+
+class _HealthNoiseFilter(logging.Filter):
+    """Drop health access records and standard-library logs inside readiness calls."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _health_observability_suppressed.get():
+            return False
+        if record.name in {"httpx", "uvicorn.access", "hypercorn.access"}:
+            return not _record_contains_health_path(record)
+        return True
+
+
+_health_noise_filter = _HealthNoiseFilter()
+
+
+@contextmanager
+def suppress_health_observability() -> Iterator[None]:
+    """Suppress logs and outbound HTTP spans for one health operation."""
+
+    token = _health_observability_suppressed.set(True)
+    try:
+        try:
+            from opentelemetry.instrumentation.utils import suppress_http_instrumentation
+        except Exception:
+            yield
+        else:
+            with suppress_http_instrumentation():
+                yield
+    finally:
+        _health_observability_suppressed.reset(token)
+
+
+def _drop_suppressed_health_log(
+    _logger: Any, _method_name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    if _health_observability_suppressed.get():
+        raise structlog.DropEvent
+    return event_dict
 
 
 def metrics_text() -> bytes:
@@ -110,8 +202,13 @@ def _configure_structlog(log_level: str) -> None:
     """JSON logs to stdout, shared processor chain, level from settings."""
     level = getattr(logging, log_level.upper(), logging.INFO)
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level)
+    for logger_name in ("httpx", "uvicorn.access", "hypercorn.access"):
+        logger = logging.getLogger(logger_name)
+        if _health_noise_filter not in logger.filters:
+            logger.addFilter(_health_noise_filter)
     structlog.configure(
         processors=[
+            _drop_suppressed_health_log,
             structlog.contextvars.merge_contextvars,
             _add_trace_context,
             structlog.processors.add_log_level,
@@ -309,13 +406,37 @@ def emit_instrumented_action(action: InstrumentedAction) -> None:
         span.set_attribute(key, value)
 
 
+def _sentry_before_send(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any] | None:
+    if _health_observability_suppressed.get():
+        return None
+    request = event.get("request") or {}
+    url = request.get("url", "") if isinstance(request, dict) else ""
+    return None if isinstance(url, str) and _is_health_path(url) else event
+
+
+def _sentry_before_breadcrumb(
+    breadcrumb: dict[str, Any], _hint: dict[str, Any]
+) -> dict[str, Any] | None:
+    if _health_observability_suppressed.get():
+        return None
+    data = breadcrumb.get("data") or {}
+    url = data.get("url", "") if isinstance(data, dict) else ""
+    return None if isinstance(url, str) and _is_health_path(url) else breadcrumb
+
+
 def _configure_sentry(dsn: str, service_name: str) -> None:
     if not dsn:
         return
     try:
         import sentry_sdk
 
-        sentry_sdk.init(dsn=dsn, traces_sample_rate=0.0, environment=service_name)
+        sentry_sdk.init(
+            dsn=dsn,
+            traces_sample_rate=0.0,
+            environment=service_name,
+            before_send=_sentry_before_send,
+            before_breadcrumb=_sentry_before_breadcrumb,
+        )
     except Exception:
         pass
 

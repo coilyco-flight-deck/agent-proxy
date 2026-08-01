@@ -10,6 +10,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import SpanKind
 
 from app import models, resilience, upstream
+from app.readiness import RouteReadiness, UnknownRoute
 from app.route_registry import DirectTarget, Route, RouteRegistry
 from app.upstream import UpstreamResult
 
@@ -73,9 +74,84 @@ def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
 
+def test_route_readiness_endpoint(client, monkeypatch):
+    async def ready(route):
+        return RouteReadiness(route=route, ready=True, failed_checks=())
+
+    monkeypatch.setattr("app.main.check_route_readiness", ready)
+
+    response = client.get("/readyz/community/conversation-management")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "route": "community/conversation-management",
+    }
+
+
+def test_route_readiness_failure_is_minimal(client, monkeypatch):
+    async def not_ready(route):
+        return RouteReadiness(
+            route=route,
+            ready=False,
+            failed_checks=("litellm_catalog", "ollama_catalog"),
+        )
+
+    monkeypatch.setattr("app.main.check_route_readiness", not_ready)
+
+    response = client.get("/readyz/community/conversation-management")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "route": "community/conversation-management",
+        "failed_checks": ["litellm_catalog", "ollama_catalog"],
+    }
+    assert "ornith" not in response.text
+    assert "http://" not in response.text
+
+
+def test_unknown_route_is_not_disclosed(client, monkeypatch):
+    async def unknown(_route):
+        raise UnknownRoute
+
+    monkeypatch.setattr("app.main.check_route_readiness", unknown)
+
+    response = client.get("/readyz/community/unknown")
+
+    assert response.status_code == 404
+    assert response.json() == {"status": "unknown_route"}
+
+
+def test_health_routes_emit_no_server_spans_or_trajectory_events(client, monkeypatch):
+    async def ready(route):
+        return RouteReadiness(route=route, ready=True, failed_checks=())
+
+    monkeypatch.setattr("app.main.check_route_readiness", ready)
+    monkeypatch.setattr(
+        "app.main._emit_trajectory_event",
+        lambda _event: pytest.fail("health route emitted a trajectory event"),
+    )
+    exporter = InMemorySpanExporter()
+    trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(exporter))
+    exporter.clear()
+
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/readyz/community/conversation-management").status_code == 200
+    assert client.get("/metrics").status_code == 200
+
+    health_routes = {"/healthz", "/readyz/{role}/{intent}", "/metrics"}
+    assert not any(
+        span.kind is SpanKind.SERVER and span.attributes.get("http.route") in health_routes
+        for span in exporter.get_finished_spans()
+    )
+
+
 def test_metrics_exposed(client):
     body = client.get("/metrics").text
     assert "llm_requests_total" in body
+    assert "agent_proxy_health_endpoint_requests_total" in body
+    assert "agent_proxy_readiness_checks_total" in body
 
 
 def test_list_models(client):

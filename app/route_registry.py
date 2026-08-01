@@ -31,6 +31,7 @@ class Route:
     key: str
     upstream_alias: str
     direct: DirectTarget | None
+    readiness_targets: tuple[DirectTarget, ...] = ()
     enabled: bool = True
 
 
@@ -103,6 +104,24 @@ def _direct(value: Any, key: str) -> DirectTarget | None:
     return DirectTarget(model=model, runtime=runtime)
 
 
+def _readiness_targets(value: Any, key: str) -> tuple[DirectTarget, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise RouteRegistryError(f"{key}: readiness_targets must be a non-empty list")
+    targets: list[DirectTarget] = []
+    seen: set[DirectTarget] = set()
+    for index, item in enumerate(value):
+        target = _direct(item, f"{key}: readiness_targets[{index}]")
+        if target is None:
+            raise RouteRegistryError(f"{key}: readiness_targets[{index}] must be an object")
+        if target in seen:
+            raise RouteRegistryError(f"{key}: duplicate readiness target")
+        seen.add(target)
+        targets.append(target)
+    return tuple(targets)
+
+
 def load_route_registry(path_value: str | Path) -> RouteRegistry:
     """Read and validate one regular, bounded JSON registry file."""
 
@@ -132,7 +151,11 @@ def load_route_registry(path_value: str | Path) -> RouteRegistry:
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             raise RouteRegistryError(f"route {index} must be an object")
-        _keys(row, {"key", "upstream_alias", "direct", "enabled"}, f"route {index}")
+        _keys(
+            row,
+            {"key", "upstream_alias", "direct", "readiness_targets", "enabled"},
+            f"route {index}",
+        )
         key = _route_key(row.get("key"))
         if key in routes:
             raise RouteRegistryError(f"duplicate logical route key: {key}")
@@ -144,6 +167,7 @@ def load_route_registry(path_value: str | Path) -> RouteRegistry:
             key=key,
             upstream_alias=alias,
             direct=_direct(row.get("direct"), key),
+            readiness_targets=_readiness_targets(row.get("readiness_targets"), key),
             enabled=enabled,
         )
     return RouteRegistry(routes=routes, source=_source(payload.get("source")))

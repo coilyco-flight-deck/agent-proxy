@@ -23,7 +23,9 @@ Heavy data processing stays out of the latency-sensitive model request path. The
   behind the proxy boundary, plus backend-derived safe context handling.
 - A bounded in-memory worker queue, response validation, retry, fallback, and per-backend circuit breaking.
 - Context-budget protection and a small self-verification detector for unsupported action claims.
-- Structured logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, Ward correlation metadata, and health endpoints.
+- Structured logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, Ward correlation metadata, and metrics-only health endpoints.
+- Non-generating logical-route readiness that checks the LiteLLM and Ollama
+  control surfaces without loading model weights or extending VRAM residency.
 - Ward skill-use artifact parsing that durably retains metadata-only trajectory
   observations and preserves structured-log and Prometheus projections.
 - An executable trajectory contract v1 package with producer and consumer validation, compatibility fixtures, and a JSON Schema for non-Python consumers.
@@ -100,5 +102,7 @@ with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
 - [`docs/litellm-parity.md`](docs/litellm-parity.md) records the standalone decision, capability matrix, runner, and cutover blockers.
 - [`docs/route-registry.md`](docs/route-registry.md) defines the mounted logical
   route contract, startup behavior, and direct rollback.
+- [`docs/readiness.md`](docs/readiness.md) defines liveness, structural route
+  readiness, inference evidence, and the no-log health contract.
 - [`docs/work-graph.md`](docs/work-graph.md) links the new dependency-ordered implementation issues.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) explains sequencing without treating future capabilities as prohibited work.

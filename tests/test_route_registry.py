@@ -23,6 +23,10 @@ def _payload() -> dict[str, object]:
                 "key": "community/knowledge-retrieval",
                 "upstream_alias": "community/knowledge-retrieval",
                 "direct": {"model": "ornith:35b", "runtime": "ollama"},
+                "readiness_targets": [
+                    {"model": "ornith:35b", "runtime": "ollama"},
+                    {"model": "ornith:9b", "runtime": "ollama"},
+                ],
             },
             {
                 "key": "engineer/autonomous-coding",
@@ -54,6 +58,10 @@ def test_valid_registry_loads_logical_routes(tmp_path):
     route = registry.routes["community/knowledge-retrieval"]
     assert route.upstream_alias == route.key
     assert route.direct == route_registry.DirectTarget("ornith:35b", "ollama")
+    assert route.readiness_targets == (
+        route_registry.DirectTarget("ornith:35b", "ollama"),
+        route_registry.DirectTarget("ornith:9b", "ollama"),
+    )
     assert registry.source["format"] == "aosh.agent-proxy-routes"
 
 
@@ -94,6 +102,16 @@ def test_malformed_direct_target_is_rejected(tmp_path):
     del payload["routes"][0]["direct"]["runtime"]
 
     with pytest.raises(route_registry.RouteRegistryError, match="direct runtime"):
+        route_registry.load_route_registry(_write(tmp_path, payload))
+
+
+def test_duplicate_readiness_target_is_rejected(tmp_path):
+    payload = _payload()
+    payload["routes"][0]["readiness_targets"].append(
+        dict(payload["routes"][0]["readiness_targets"][0])
+    )
+
+    with pytest.raises(route_registry.RouteRegistryError, match="duplicate readiness target"):
         route_registry.load_route_registry(_write(tmp_path, payload))
 
 

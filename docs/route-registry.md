@@ -33,7 +33,17 @@ resources stay in Deploy-owned backend configuration, outside this registry.
       "direct": {
         "model": "ornith:35b",
         "runtime": "ollama"
-      }
+      },
+      "readiness_targets": [
+        {
+          "model": "ornith:35b",
+          "runtime": "ollama"
+        },
+        {
+          "model": "ornith:9b",
+          "runtime": "ollama"
+        }
+      ]
     }
   ]
 }
@@ -43,6 +53,13 @@ resources stay in Deploy-owned backend configuration, outside this registry.
 the established rollback path. Direct mode currently supports Ollama targets.
 A known llama.cpp target fails closed instead of silently selecting another
 model.
+
+`readiness_targets` is an optional ordered list of physical primary and
+fallback targets rendered by Deploy from the same source that renders LiteLLM
+routing. Agent Proxy uses the list only for non-generating installed-model
+checks. If it is absent, readiness checks the existing `direct` target for
+backward compatibility. Physical target names never enter readiness responses,
+logs, traces, or metric labels.
 
 The loader rejects unknown formats or fields, duplicate keys, missing aliases,
 malformed targets, unsafe file types, oversized files, and invalid JSON.
