@@ -42,6 +42,7 @@ from .obs import (
     llm_upstream_latency_seconds,
     llm_validation_failures_total,
     log,
+    record_error,
     request_log_fields,
     get_tracer,
 )
@@ -287,6 +288,7 @@ def _verify_delivered_context(
     if attempt_span is not None:
         attempt_span.set_attribute("agentproxy.context_truncated", True)
         attempt_span.set_attribute("agentproxy.target_num_ctx", model.num_ctx)
+    record_error("context_truncated", attempt_span)
     if settings.fail_on_context_truncation:
         raise ContextTruncated(
             f"{model.name}: backend {backend.name} delivered {result.prompt_eval_count} "
@@ -383,7 +385,7 @@ async def dispatch(
                         error=str(exc),
                     )
                     if attempt_span is not None:
-                        attempt_span.record_exception(exc)
+                        record_error("upstream_transport_failed", attempt_span)
                         attempt_span.set_attribute("agentproxy.outcome", "failed")
                     if attempt < settings.max_retries:
                         llm_retries_total.labels(
@@ -432,6 +434,7 @@ async def dispatch(
                     reason=reason,
                     attempt=attempt,
                 )
+                record_error("response_validation_failed", attempt_span)
                 if attempt_span is not None:
                     attempt_span.set_attribute("agentproxy.outcome", "validation-failure")
                     attempt_span.set_attribute("agentproxy.validation_reason", reason)

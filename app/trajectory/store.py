@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import ValidationError
 
-from app.obs import get_logger
+from app.obs import get_logger, record_error
 from app.trajectory.schema import TrajectoryEvent, canonical_event_bytes, validate_event
 
 log = get_logger("agent-proxy.trajectory.store")
@@ -520,6 +520,7 @@ class AsyncTrajectoryEmitter:
                 except Exception as exc:
                     self.failed += 1
                     self.last_error_class = type(exc).__name__
+                    record_error("trajectory_event_persist_failed")
                     log.warning(
                         "trajectory.event.persist_failed",
                         error_class=self.last_error_class,

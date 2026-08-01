@@ -18,6 +18,7 @@ from app.obs import (
     init_sentry,
     log_on_span,
     metrics_text,
+    record_error,
     suppress_health_observability,
 )
 
@@ -199,6 +200,46 @@ def test_emit_instrumented_action_hits_log_metric_and_span(monkeypatch, capsys):
     ]
     assert attributes["logical_model"] == "m"
     assert attributes["dropped_message_count"] == 2
+
+
+def test_record_error_emits_closed_set_exception_and_error_status():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import StatusCode
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    with provider.get_tracer("test").start_as_current_span("failed.operation") as span:
+        record_error("upstream_transport_failed", span)
+
+    ended = exporter.get_finished_spans()
+    assert len(ended) == 1
+    assert ended[0].status.status_code is StatusCode.ERROR
+    assert ended[0].status.description == "upstream_transport_failed"
+    exception = next(event for event in ended[0].events if event.name == "exception")
+    assert exception.attributes["exception.type"] == "app.obs._RecordedError"
+    assert exception.attributes["exception.message"] == "upstream_transport_failed"
+    assert exception.attributes["error.type"] == "upstream_transport_failed"
+
+
+def test_record_error_starts_span_for_background_failure(monkeypatch):
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr("app.obs._tracer", provider.get_tracer("test"))
+
+    record_error("trajectory_event_persist_failed")
+
+    ended = exporter.get_finished_spans()
+    assert len(ended) == 1
+    assert ended[0].name == "error.recorded"
+    assert any(event.name == "exception" for event in ended[0].events)
 
 
 def test_metrics_text_exposes_leg04_names():

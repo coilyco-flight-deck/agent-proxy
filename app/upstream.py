@@ -20,7 +20,7 @@ import httpx
 
 from .config import get_settings
 from .models import Backend
-from .obs import get_tracer, log
+from .obs import get_tracer, log, record_error
 
 
 class UpstreamError(Exception):
@@ -345,7 +345,7 @@ async def chat(
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            span.record_exception(exc)
+            record_error("upstream_transport_failed", span)
             span.set_attribute("agentproxy.upstream.error", str(exc))
             log.warning(
                 "upstream.completed",
@@ -471,7 +471,7 @@ async def chat_stream(
         )
     except httpx.HTTPError as exc:
         if span_cm is not None:
-            span.record_exception(exc)
+            record_error("upstream_transport_failed", span)
             span.set_attribute("agentproxy.upstream.error", str(exc))
         log.warning(
             "upstream.completed",
@@ -515,6 +515,7 @@ async def generate(
         )
         resp.raise_for_status()
     except httpx.HTTPError as exc:
+        record_error("upstream_transport_failed")
         raise UpstreamError(f"{backend.name}: {exc}") from exc
     data = resp.json()
     if backend.dialect == "ollama":

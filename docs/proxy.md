@@ -51,6 +51,13 @@ the current lowercase hexadecimal `trace_id` and `span_id`. The ser8 SigNoz
 which enables the traces-to-logs jump without duplicating log export in the
 request path. Logs outside a valid span omit both fields.
 
+Every handled request, stream, validation, transport, queue-worker, and
+trajectory-persistence failure records an OpenTelemetry `exception` event and
+marks its span as an error. The exception uses a static service-local type and
+a closed-set error code as its message. Dynamic diagnostics remain outside the
+exception grouping event, giving the SigNoz Exceptions page complete baseline
+coverage without adding new body capture.
+
 FastAPI instrumentation is installed while the application is assembled,
 before Starlette freezes its middleware stack. The HTTP server span extracts
 the caller's W3C `traceparent`, and `request.chat` or `request.completions`

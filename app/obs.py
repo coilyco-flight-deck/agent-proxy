@@ -339,6 +339,37 @@ def _current_span():
     return span
 
 
+class _RecordedError(Exception):
+    """Static exception type whose message is always a closed-set error code."""
+
+
+def _record_error_on_span(span: Any, error_type: str) -> None:
+    from opentelemetry.trace import Status, StatusCode
+
+    span.record_exception(
+        _RecordedError(error_type),
+        attributes={"error.type": error_type},
+        escaped=False,
+    )
+    span.set_attribute("error.type", error_type)
+    span.set_status(Status(StatusCode.ERROR, error_type))
+
+
+def record_error(error_type: str, span: Any | None = None) -> None:
+    """Project one closed-set runtime error onto the SigNoz Exceptions surface."""
+
+    target = span
+    if target is None or not getattr(target, "is_recording", lambda: False)():
+        target = _current_span()
+    if target is not None:
+        _record_error_on_span(target, error_type)
+        return
+    if _tracer is None:
+        return
+    with _tracer.start_as_current_span("error.recorded") as error_span:
+        _record_error_on_span(error_span, error_type)
+
+
 def get_current_trace_span():
     """Return the active span when it carries a valid correlation context."""
     try:

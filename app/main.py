@@ -42,6 +42,7 @@ from .obs import (
     log,
     log_on_span,
     metrics_text,
+    record_error,
 )
 from .readiness import UnknownRoute, check_route_readiness
 from .queue import QueueBusy, get_queue
@@ -259,6 +260,7 @@ def _chat_completion_response(model_name: str, result: upstream.UpstreamResult) 
 
 
 def _error(status: int, message: str, err_type: str) -> JSONResponse:
+    record_error(err_type)
     return JSONResponse(
         status_code=status, content={"error": {"message": message, "type": err_type}}
     )
@@ -315,6 +317,7 @@ def _emit_trajectory_event(event: TrajectoryEvent) -> bool:
         return False
     accepted = _trajectory_emitter.emit_nowait(event.model_dump(mode="json", exclude_none=True))
     if not accepted:
+        record_error("trajectory_event_dropped")
         log.warning(
             "trajectory.event.dropped",
             event_type=event.event_type,
@@ -435,6 +438,7 @@ async def _stream_chat(
                             terminal_result = upstream.parse_stream_result(chunk, model_name)
                             upstream.set_result_span_attributes(span, terminal_result)
         except AllBackendsFailed as exc:
+            record_error("stream_failed", terminal_span)
             log.warning("stream.failed", **trace_ctx.attrs(), error=str(exc), outcome="failed")
             finish = "stop"
             outcome = "failed"

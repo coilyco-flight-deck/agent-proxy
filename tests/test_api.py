@@ -70,6 +70,18 @@ def _span_attrs(spans, name):
     return matches[-1]
 
 
+def test_error_response_records_closed_set_exception(monkeypatch):
+    recorded = []
+    monkeypatch.setattr("app.main.record_error", recorded.append)
+
+    from app.main import _error
+
+    response = _error(502, "dynamic diagnostic", "upstream_error")
+
+    assert response.status_code == 502
+    assert recorded == ["upstream_error"]
+
+
 def test_healthz(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 

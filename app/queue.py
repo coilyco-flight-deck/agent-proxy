@@ -25,6 +25,7 @@ from .obs import (
     llm_queue_depth,
     llm_queue_rejected_total,
     log,
+    record_error,
     request_log_fields,
     get_tracer,
 )
@@ -151,6 +152,7 @@ class WorkQueue:
                 if job.future is not None and not job.future.done():
                     job.future.set_result(result)
             except Exception as exc:  # deliver the failure to the awaiting route
+                record_error("queue_worker_failed")
                 if job.future is not None and not job.future.done():
                     job.future.set_exception(exc)
             finally:
