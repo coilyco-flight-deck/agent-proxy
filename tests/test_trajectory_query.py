@@ -110,9 +110,7 @@ def test_harness_fit_filters_and_keeps_observational_limits():
     ) as client:
         result = compare_harness_fit(client, harness="codex", model="model-a")
 
-    assert result["rows"] == [
-        {"harness": "codex", "model": "model-a", "trajectory_count": 4}
-    ]
+    assert result["rows"] == [{"harness": "codex", "model": "model-a", "trajectory_count": 4}]
     assert result["view"]["matched_row_count"] == 1
     assert "observational" in result["interpretation_limits"][0]
 

@@ -24,7 +24,8 @@ The aosh build documents remain evidence for the delivered reliability behavior.
 
 - Do not delete or weaken the current reliability behavior until issue #41 demonstrates LiteLLM parity.
 - Do not claim an architecture-v2 component is landed until code and verification land. Keep `docs/FEATURES.md` current.
-- Current skill-use ingestion emits structured logs and a Prometheus counter. It does not durably retain trajectories yet.
+- Current skill-use ingestion durably retains metadata-only trajectory
+  observations while preserving structured logs and a Prometheus counter.
 
 ## Shape and conventions
 

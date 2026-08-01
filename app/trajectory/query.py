@@ -93,9 +93,7 @@ class TrajectoryQueryClient:
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPStatusError as exc:
-            raise QueryError(
-                f"GET {path} returned HTTP {exc.response.status_code}"
-            ) from exc
+            raise QueryError(f"GET {path} returned HTTP {exc.response.status_code}") from exc
         except (httpx.HTTPError, json.JSONDecodeError) as exc:
             raise QueryError(f"GET {path} failed: {exc.__class__.__name__}") from exc
         if not isinstance(payload, dict):
@@ -141,14 +139,11 @@ def investigate(
         filtered[name] = rows
         summaries[name] = _view_summary(view, len(rows))
         trajectory_ids.update(
-            str(row["trajectory_id"])
-            for row in rows
-            if isinstance(row.get("trajectory_id"), str)
+            str(row["trajectory_id"]) for row in rows if isinstance(row.get("trajectory_id"), str)
         )
 
     indexes = {
-        name: {str(row["trajectory_id"]): row for row in rows}
-        for name, rows in filtered.items()
+        name: {str(row["trajectory_id"]): row for row in rows} for name, rows in filtered.items()
     }
     trajectories = []
     for trajectory_id in sorted(trajectory_ids):
@@ -250,9 +245,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     if args.command == "investigate" and not any(
         (args.repository, args.issue, args.workflow, args.trajectory)
     ):
-        parser.error(
-            "investigate requires --repository, --issue, --workflow, or --trajectory"
-        )
+        parser.error("investigate requires --repository, --issue, --workflow, or --trajectory")
 
     try:
         with TrajectoryQueryClient(args.base_url, timeout=args.timeout) as client:

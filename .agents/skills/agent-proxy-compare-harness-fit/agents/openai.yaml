@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Proxy Harness Fit"
+  short_description: "Compare observed harness and model outcomes"
+  default_prompt: "Use $agent-proxy-compare-harness-fit to compare the observed harness and model evidence."
