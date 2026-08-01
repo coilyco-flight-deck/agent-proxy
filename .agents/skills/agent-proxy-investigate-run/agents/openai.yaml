@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Proxy Run Investigation"
+  short_description: "Investigate correlated Agent Proxy evidence"
+  default_prompt: "Use $agent-proxy-investigate-run to explain what happened to this run or issue."

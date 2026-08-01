@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ollama via Agent Proxy"
+  short_description: "Route Ollama work through Agent Proxy"
+  default_prompt: "Use $ollama to route this Ollama task through Agent Proxy."

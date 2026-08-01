@@ -33,7 +33,7 @@ Heavy data processing stays out of the latency-sensitive model request path. The
 - Deterministic cold-path episode and trajectory reconstruction with explicit partial and late status, source-event provenance, content hashes, and append-only revisions.
 - Immutable evaluation, verifier, human annotation, and intervention records with supersession, disagreement, late-arrival, privacy, and replay semantics.
 - Reproducible SFT, preference, verifier, reward, and held-out evaluation exports with write-once manifests and trajectory-level leakage prevention.
-- Governed reliability, cost and latency, policy, evaluation, and harness-fit views with OTLP joins, freshness metadata, and evidence-only Ward dossier inputs.
+- Governed reliability, cost and latency, policy, evaluation, and harness-fit views with OTLP joins, freshness metadata, evidence-only Ward dossier inputs, and a read-only query helper for agent skills.
 - A machine-readable standalone-versus-SDK LiteLLM decision, executable endpoint parity runner, and an authenticated inner-gateway client that intersects the LiteLLM service-key catalog with tower context metadata, forwards safe `num_ctx`, and carries body-safe correlation metadata.
 - Cold-path agent-compose bundle ingestion that retains role, selected-skill,
   artifact, and decision evidence without copying the opaque context tree.
@@ -68,6 +68,12 @@ Run the current proxy or its container acceptance test:
 ```bash
 ward exec serve
 ward exec test-container
+```
+
+Inspect governed trajectory evidence without mutating Agent Proxy:
+
+```bash
+ward exec trajectory-query -- --help
 ```
 
 The proxy uses port 8080 by default. Set `PROXY_HOST`, `PROXY_PORT`, or `LOG_LEVEL` to override its host, port, or log level.

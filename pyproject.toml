@@ -47,6 +47,7 @@ dev = [
 
 [project.scripts]
 agent-proxy = "app.main:main"
+agent-proxy-query = "app.trajectory.query:main"
 
 [project.urls]
 "Homepage" = "https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "LiteLLM via Agent Proxy"
+  short_description: "Route LiteLLM work through Agent Proxy"
+  default_prompt: "Use $litellm to route this LiteLLM task through Agent Proxy."

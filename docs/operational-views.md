@@ -4,6 +4,26 @@ Agent Proxy exposes internal cold-path views under
 `/v1/trajectory/views/<name>` and evidence-only dossier inputs under
 `/v1/trajectory/dossiers/<trajectory-id>`.
 
+## Read-only query helper
+
+Use the repository-owned helper for deterministic filtering and cross-view joins:
+
+```text
+ward exec trajectory-query -- --help
+ward exec trajectory-query -- investigate --issue owner/repository#42
+ward exec trajectory-query -- harness-fit --harness codex --model logical/model
+```
+
+`investigate` accepts exact repository, issue, workflow, and trajectory filters,
+then joins reliability, cost and latency, policy, evaluation, and dossier
+evidence by trajectory id. `harness-fit` filters the existing observational
+aggregate by harness or model. It does not add a time window or repository
+dimension that the underlying view does not contain.
+
+The helper defaults to `PROXY_BASE_URL` or `http://127.0.0.1:8080`. It emits
+JSON on stdout, copies no response bodies into errors, and never mutates Agent
+Proxy.
+
 ## Query contracts
 
 Versioned contracts cover:
