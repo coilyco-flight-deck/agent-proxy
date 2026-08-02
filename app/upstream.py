@@ -11,6 +11,7 @@ shape.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -326,6 +327,15 @@ async def chat(
                 **auth_kwargs,
             )
             resp.raise_for_status()
+        except asyncio.CancelledError:
+            log.info(
+                "upstream.completed",
+                **_correlation_log_fields(span_attrs),
+                backend=backend.name,
+                backend_dialect=backend.dialect,
+                outcome="cancelled",
+            )
+            raise
         except httpx.HTTPError as exc:
             raise UpstreamError(f"{backend.name}: {exc}") from exc
         return (
@@ -344,6 +354,20 @@ async def chat(
                 **auth_kwargs,
             )
             resp.raise_for_status()
+        except asyncio.CancelledError:
+            cancellation_fields = {
+                "backend": backend.name,
+                "backend_dialect": backend.dialect,
+                "outcome": "cancelled",
+            }
+            span.set_attribute("agentproxy.upstream.outcome", "cancelled")
+            span.add_event("upstream.cancelled", cancellation_fields)
+            log.info(
+                "upstream.completed",
+                **_correlation_log_fields(span_attrs),
+                **cancellation_fields,
+            )
+            raise
         except httpx.HTTPError as exc:
             record_error("upstream_transport_failed", span)
             span.set_attribute("agentproxy.upstream.error", str(exc))
@@ -469,6 +493,21 @@ async def chat_stream(
             backend_dialect=backend.dialect,
             outcome="ok",
         )
+    except asyncio.CancelledError:
+        cancellation_fields = {
+            "backend": backend.name,
+            "backend_dialect": backend.dialect,
+            "outcome": "cancelled",
+        }
+        if span_cm is not None:
+            span.set_attribute("agentproxy.upstream.outcome", "cancelled")
+            span.add_event("upstream.cancelled", cancellation_fields)
+        log.info(
+            "upstream.completed",
+            **_correlation_log_fields(span_attrs),
+            **cancellation_fields,
+        )
+        raise
     except httpx.HTTPError as exc:
         if span_cm is not None:
             record_error("upstream_transport_failed", span)

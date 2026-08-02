@@ -73,3 +73,13 @@ def test_request_failure_uses_normalized_error_class():
     assert failed.payload.outcome == "queue_rejected"
     assert failed.payload.error_class == "queue_rejected"
     assert failed.content.capture == "metadata_only"
+
+
+def test_request_cancellation_is_metadata_only_terminal_evidence():
+    cancelled = _lifecycle().execution_event("cancelled", latency_ms=2)
+
+    assert cancelled.event_type == "execution.failed"
+    assert cancelled.payload.outcome == "cancelled"
+    assert cancelled.payload.error_class == "cancelled"
+    assert cancelled.attributes["agentproxy.request.outcome"] == "cancelled"
+    assert cancelled.content.capture == "metadata_only"

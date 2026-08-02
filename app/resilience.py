@@ -472,6 +472,18 @@ async def dispatch(
                         "gen_ai.usage.input_tokens", result.prompt_eval_count
                     )
                     attempt_span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
+            except asyncio.CancelledError:
+                cancellation_fields = request_log_fields(
+                    trace_ctx,
+                    backend=backend.name,
+                    attempt=attempt,
+                    outcome="cancelled",
+                )
+                log.info("dispatch.cancelled", **cancellation_fields)
+                if attempt_span is not None:
+                    attempt_span.set_attribute("agentproxy.outcome", "cancelled")
+                    attempt_span.add_event("dispatch.cancelled", cancellation_fields)
+                raise
             finally:
                 if attempt_span_cm is not None:
                     attempt_span_cm.__exit__(None, None, None)
@@ -557,6 +569,12 @@ async def dispatch_stream(
                 yield chunk
             breakers.record_success(backend)
             return
+        except asyncio.CancelledError:
+            log.info(
+                "stream.cancelled",
+                **request_log_fields(trace_ctx, backend=backend.name, outcome="cancelled"),
+            )
+            raise
         except UpstreamError as exc:
             breakers.record_failure(backend)
             last_error = str(exc)

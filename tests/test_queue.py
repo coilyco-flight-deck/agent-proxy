@@ -22,6 +22,29 @@ async def test_full_queue_raises_queue_busy():
         await q.submit(_model(), [], None, None)
 
 
+async def test_cancelled_waiting_job_releases_queue_slot():
+    q = WorkQueue(maxsize=1, worker_count=0)
+    q._queue = asyncio.Queue(maxsize=1)  # bind on this test's loop, no workers.
+
+    waiting = asyncio.create_task(q.submit(_model(), [], None, None))
+    await asyncio.sleep(0)
+    assert q._queue.qsize() == 1
+
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await asyncio.sleep(0)
+
+    assert q._queue.qsize() == 0
+
+    replacement = asyncio.create_task(q.submit(_model(), [], None, None))
+    await asyncio.sleep(0)
+    assert q._queue.qsize() == 1
+    replacement.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await replacement
+
+
 async def test_worker_delivers_result(monkeypatch):
     from app import resilience
     from app.upstream import UpstreamResult

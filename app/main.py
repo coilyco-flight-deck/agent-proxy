@@ -10,6 +10,7 @@ to model-visible messages.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -343,6 +344,19 @@ def _emit_request_terminal(
     )
 
 
+def _mark_cancelled_span(span: Any | None, event: str) -> None:
+    """Attach one closed-set cancellation outcome without dynamic diagnostics."""
+
+    if span is None:
+        return
+    try:
+        span.set_attribute("agentproxy.outcome", "cancelled")
+        span.add_event(event, {"outcome": "cancelled"})
+    except Exception:
+        # Telemetry remains best-effort and never interferes with cancellation.
+        pass
+
+
 # --------------------------------------------------------------------------- #
 # OpenAI surface
 # --------------------------------------------------------------------------- #
@@ -437,6 +451,16 @@ async def _stream_chat(
                             finish = "length" if chunk.get("done_reason") == "length" else "stop"
                             terminal_result = upstream.parse_stream_result(chunk, model_name)
                             upstream.set_result_span_attributes(span, terminal_result)
+        except asyncio.CancelledError:
+            _mark_cancelled_span(terminal_span, "request.cancelled")
+            log_on_span(
+                terminal_span,
+                "request.completed",
+                **trace_ctx.attrs(),
+                outcome="cancelled",
+            )
+            _emit_request_terminal(lifecycle, "cancelled", started=started)
+            raise
         except AllBackendsFailed as exc:
             record_error("stream_failed", terminal_span)
             log.warning("stream.failed", **trace_ctx.attrs(), error=str(exc), outcome="failed")
@@ -461,6 +485,37 @@ async def _stream_chat(
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+async def _wait_for_disconnect(request: Request) -> None:
+    """Wait for the ASGI disconnect message after the request body is consumed."""
+
+    while True:
+        message = await request.receive()
+        if message["type"] == "http.disconnect":
+            return
+
+
+async def _chat_completion_until_disconnect(request: Request, body: dict[str, Any]) -> Response:
+    """Cancel non-streaming request work as soon as its client disconnects."""
+
+    operation = asyncio.create_task(_chat_completions(body, request.headers))
+    disconnected = asyncio.create_task(_wait_for_disconnect(request))
+    try:
+        done, _ = await asyncio.wait(
+            {operation, disconnected},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if disconnected in done:
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+            raise asyncio.CancelledError
+        return operation.result()
+    finally:
+        for task in (operation, disconnected):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(operation, disconnected, return_exceptions=True)
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> Response:
     try:
@@ -469,7 +524,9 @@ async def chat_completions(request: Request) -> Response:
         return _error(400, "invalid JSON body", "invalid_request_error")
     if not isinstance(body, dict):
         return _error(400, "JSON body must be an object", "invalid_request_error")
-    return await _chat_completions(body, request.headers)
+    if body.get("stream"):
+        return await _chat_completions(body, request.headers)
+    return await _chat_completion_until_disconnect(request, body)
 
 
 async def _chat_completions(body: dict[str, Any], headers) -> Response:
@@ -555,14 +612,29 @@ async def _chat_completions(body: dict[str, Any], headers) -> Response:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
                 log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
-                result = await get_queue().submit(
-                    model, messages, tools, options, trace_ctx=trace_ctx
-                )
+                try:
+                    result = await get_queue().submit(
+                        model, messages, tools, options, trace_ctx=trace_ctx
+                    )
+                except asyncio.CancelledError:
+                    _mark_cancelled_span(span, "request.cancelled")
+                    raise
                 span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
                 span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
                 span.set_attribute(
                     "response.finish_reasons", [result.done_reason] if result.done_reason else []
                 )
+    except asyncio.CancelledError:
+        _emit_request_terminal(lifecycle, "cancelled", started=started)
+        llm_requests_total.labels(logical_model=model.name, outcome="cancelled").inc()
+        _mark_cancelled_span(request_span, "request.cancelled")
+        log_on_span(
+            request_span,
+            "request.completed",
+            **trace_ctx.attrs(),
+            outcome="cancelled",
+        )
+        raise
     except QueueBusy:
         _emit_request_terminal(lifecycle, "queue_rejected", started=started)
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
@@ -736,14 +808,29 @@ async def completions(request: Request) -> Response:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
                 log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
-                result = await get_queue().submit(
-                    model, messages, None, options, trace_ctx=trace_ctx
-                )
+                try:
+                    result = await get_queue().submit(
+                        model, messages, None, options, trace_ctx=trace_ctx
+                    )
+                except asyncio.CancelledError:
+                    _mark_cancelled_span(span, "request.cancelled")
+                    raise
                 span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
                 span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
                 span.set_attribute(
                     "response.finish_reasons", [result.done_reason] if result.done_reason else []
                 )
+    except asyncio.CancelledError:
+        _emit_request_terminal(lifecycle, "cancelled", started=started)
+        llm_requests_total.labels(logical_model=model.name, outcome="cancelled").inc()
+        _mark_cancelled_span(request_span, "request.cancelled")
+        log_on_span(
+            request_span,
+            "request.completed",
+            **trace_ctx.attrs(),
+            outcome="cancelled",
+        )
+        raise
     except QueueBusy:
         _emit_request_terminal(lifecycle, "queue_rejected", started=started)
         llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()

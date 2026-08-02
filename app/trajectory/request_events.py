@@ -17,6 +17,7 @@ RequestOutcome = Literal[
     "context_truncated",
     "upstream_failed",
     "stream_failed",
+    "cancelled",
 ]
 
 _CORRELATION_FIELDS = {

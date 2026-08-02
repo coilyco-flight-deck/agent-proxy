@@ -113,6 +113,12 @@ class WorkQueue:
             if trace_ctx is not None:
                 log.warning("queue.rejected", **request_log_fields(trace_ctx, outcome="rejected"))
             raise QueueBusy(model.name)
+
+        def discard_if_cancelled(completed: asyncio.Future[UpstreamResult]) -> None:
+            if completed.cancelled():
+                self._discard_cancelled_job(job)
+
+        future.add_done_callback(discard_if_cancelled)
         llm_queue_depth.set(self._queue.qsize())
         tracer = get_tracer()
         if tracer is None:
@@ -122,13 +128,48 @@ class WorkQueue:
             if trace_ctx is not None:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
-            result = await future
+            try:
+                result = await future
+            except asyncio.CancelledError:
+                span.set_attribute("agentproxy.outcome", "cancelled")
+                span.add_event("queue.cancelled", {"outcome": "cancelled"})
+                raise
             span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
             span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
             span.set_attribute(
                 "response.finish_reasons", [result.done_reason] if result.done_reason else []
             )
             return result
+
+    def _discard_cancelled_job(self, job: Job) -> None:
+        """Remove a cancelled job that has not yet been claimed by a worker."""
+
+        queue = self._queue
+        if queue is None:
+            return
+
+        retained: list[Job] = []
+        removed = False
+        while True:
+            try:
+                queued = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            queue.task_done()
+            if queued is job and not removed:
+                removed = True
+                continue
+            retained.append(queued)
+
+        for queued in retained:
+            queue.put_nowait(queued)
+
+        llm_queue_depth.set(queue.qsize())
+        if removed:
+            log.info(
+                "queue.cancelled",
+                **request_log_fields(job.trace_ctx, outcome="cancelled"),
+            )
 
     async def _worker(self, idx: int) -> None:
         # start() creates the queue before spawning any worker, so it is bound
@@ -142,15 +183,38 @@ class WorkQueue:
                 otel_context.attach(job.otel_context) if job.otel_context is not None else None
             )
             try:
-                result = await resilience.dispatch(
-                    job.model,
-                    job.messages,
-                    tools=job.tools,
-                    options=job.options,
-                    trace_ctx=job.trace_ctx,
+                future = job.future
+                if future is None or future.cancelled():
+                    continue
+                dispatch_task = asyncio.create_task(
+                    resilience.dispatch(
+                        job.model,
+                        job.messages,
+                        tools=job.tools,
+                        options=job.options,
+                        trace_ctx=job.trace_ctx,
+                    )
                 )
-                if job.future is not None and not job.future.done():
-                    job.future.set_result(result)
+
+                def cancel_dispatch(completed: asyncio.Future[UpstreamResult]) -> None:
+                    if completed.cancelled() and not dispatch_task.done():
+                        dispatch_task.cancel()
+
+                future.add_done_callback(cancel_dispatch)
+                try:
+                    result = await dispatch_task
+                except asyncio.CancelledError:
+                    if future.cancelled():
+                        log.info(
+                            "queue.cancelled",
+                            **request_log_fields(job.trace_ctx, outcome="cancelled"),
+                        )
+                        continue
+                    raise
+                finally:
+                    future.remove_done_callback(cancel_dispatch)
+                if not future.done():
+                    future.set_result(result)
             except Exception as exc:  # deliver the failure to the awaiting route
                 record_error("queue_worker_failed")
                 if job.future is not None and not job.future.done():
