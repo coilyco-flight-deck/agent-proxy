@@ -92,6 +92,39 @@ The repository does not enforce this condition yet. Current capture is
 request-only, opt-in, and operational. Complete request and response capture is
 tracked in [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
+### SigNoz content viewing contract
+
+When capture is enabled, Agent Proxy emits exactly one structured request-body
+event and one structured response-body event for each boundary model call:
+
+* `model.request.captured` stores the complete normalized JSON object under
+  `request.body`.
+* `model.response.captured` stores the complete normalized JSON object under
+  `response.body`.
+
+Both events carry `agentproxy.capture.schema_version=1`,
+`agentproxy.capture.status`, `agentproxy.request_id`, `trace_id`, and `span_id`.
+The `trace_id` and request-span `span_id` pair the two events even when one
+Sirens Echo turn makes multiple model calls. The request span also carries
+canonical JSON strings under `agentproxy.request.body` and
+`agentproxy.response.body` for direct span inspection.
+
+`agentproxy.capture.status` is `complete` when the whole normalized body is
+present. A failed, cancelled, or interrupted response emits
+`model.response.captured` with `agentproxy.capture.status=incomplete`, every
+response field available at the boundary, and a closed-set
+`agentproxy.capture.reason`.
+Streaming capture reconstructs the complete normalized response returned to the
+caller. When capture is disabled, none of these body events or attributes are
+emitted.
+
+SigNoz Logs is the primary content viewer because it retains the structured JSON
+objects. From the Agent Proxy `request.chat` or `request.completions` span, use
+the trace-to-logs action, restrict the results to the same `trace_id`, `span_id`,
+and `service.name=agent-proxy`, then open the two captured events and expand
+`request.body` or `response.body`. The span attribute panel provides the same
+canonical content for direct inspection.
+
 * `x-request-id` or `metadata.request_id` - `agentproxy.request_id`
 * `x-ward-run-id` or `metadata.ward.run_id` - `ward.run_id`
 * `x-ward-container-name` or `metadata.ward.container_name` - `ward.container_name`

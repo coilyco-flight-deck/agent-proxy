@@ -33,7 +33,9 @@ therefore requires the restricted controls appropriate for model content.
 This is the accepted contract, not yet an enforced runtime guarantee. Current
 `PROXY_TRACE_BODIES` support captures selected request fields only and does not
 capture responses. [Issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77)
-tracks complete request and response capture.
+tracks complete request and response capture. The stable log events, fields,
+pairing keys, and SigNoz viewing flow are defined in
+[`docs/proxy.md`](docs/proxy.md#signoz-content-viewing-contract).
 
 ## Implemented today
 
