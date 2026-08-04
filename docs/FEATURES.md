@@ -20,7 +20,7 @@ Status legend:
   [route-registry.md](route-registry.md).
 - **Backend-derived context safety** - landed - safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
 - **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.
-- **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, closed-set SigNoz exception events for every handled runtime failure, Sentry initialization, request spans, opt-in trace-body capture, and Ollama final-response token plus phase-duration measurements for streaming and non-streaming requests.
+- **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, closed-set SigNoz exception events for every handled runtime failure, Sentry initialization, request spans, legacy opt-in capture of selected request fields, and Ollama final-response token plus phase-duration measurements for streaming and non-streaming requests.
 - **Ward correlation** - landed - request, Ward run, workflow, repository, issue, and agent-session metadata joins in logs and spans.
 - **Skill-use artifact observation** - landed - Ward reap `skill-usage.json`
   parsing durably retains metadata-only skill observations with run and
@@ -55,6 +55,11 @@ Status legend:
 
 ## Planned architecture v2
 
+- **Mandatory restricted model I/O retention** - planned - every model call
+  routed through Agent Proxy retains its complete normalized request and
+  response as governed restricted content, fails closed when durable capture
+  cannot be acknowledged, and keeps stdout, OTLP, and SigNoz metadata-only. See
+  [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 - **LiteLLM commodity behavior retirement** - planned - joined live evidence must still prove context delivery, trace continuity, retry ownership, and rollback before Agent Proxy provider routing, retries, fallbacks, queueing, or circuit behavior can retire.
 ## References
 

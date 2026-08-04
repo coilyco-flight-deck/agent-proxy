@@ -14,6 +14,23 @@ The repository is in transition. The OpenAI-compatible reliability proxy remains
 
 Heavy data processing stays out of the latency-sensitive model request path. The target architecture and migration dispositions are in [`docs/architecture-v2.md`](docs/architecture-v2.md). Independent producers and consumers implement against [`docs/trajectory-contract-v1.md`](docs/trajectory-contract-v1.md).
 
+## Model I/O usage contract
+
+Routing model traffic through Agent Proxy is consent to restricted retention of
+the complete normalized model request and response at the Agent Proxy boundary.
+Agent Proxy owns that capture so callers and wrappers do not duplicate prompt,
+response, or tool payloads in their own logs.
+
+Ordinary application logs, OTLP spans, and SigNoz remain metadata-only. Full
+model I/O belongs in the governed trajectory content store, referenced by
+restricted content identifiers with retention, access-audit, and deletion
+controls.
+
+This is the accepted usage contract, not yet an enforced runtime guarantee.
+Current `PROXY_TRACE_BODIES` support is opt-in and captures selected request
+fields only. [Issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77)
+tracks complete request and response capture plus fail-closed enforcement.
+
 ## Implemented today
 
 - An OpenAI-compatible `/v1/chat/completions`, `/v1/completions`, and `/v1/models` surface over the current gateway implementation.

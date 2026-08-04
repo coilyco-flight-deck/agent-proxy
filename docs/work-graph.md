@@ -32,6 +32,7 @@ Every dependency-ordered issue above has landed.
 - [#52](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/52) maps cli-guard audit and specgen policy evidence.
 - [#54](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/54) durably retains Ward skill-use observations.
 - [#55](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/55) offers request lifecycle evidence to the bounded emitter.
+- [#77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77) enforces restricted complete model request and response capture at the Agent Proxy boundary.
 
 These slices are independently verified and keep Ward as the execution
 authority. Live deployment, access, and cutover gates remain coordinated

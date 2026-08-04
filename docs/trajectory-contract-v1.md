@@ -115,6 +115,27 @@ No consumer may infer authorization from correlation. These fields are joins, no
 
 Large state, prompts, responses, file bodies, and tool outputs belong in `*_ref` fields or `content.body_ref`. Producers must not duplicate them into every envelope.
 
+### Agent Proxy model I/O profile
+
+Routing a model call through Agent Proxy opts that call into restricted capture
+of its complete normalized request and response. The two directions are
+separate restricted content artifacts with their own references and hashes.
+They include messages or prompts, tool definitions and calls, model-visible
+options, generated content, reasoning content, and finish state when present.
+They exclude transport credentials and hop-by-hop headers.
+
+Retries, fallbacks, tool continuations, repair turns, streaming assembly, and
+terminal failures preserve enough separate content references and causation to
+reconstruct what the model received and produced at each attempt. A successful
+response requires durable acknowledgement of its request and response content.
+If capture cannot be acknowledged within the bounded request-path policy,
+Agent Proxy fails closed.
+
+Other producers remain metadata-only unless their own contract opts into body
+capture. Agent Proxy callers must not duplicate model payloads into their logs.
+Runtime enforcement is tracked in
+[issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
+
 ## Model execution facts
 
 Model-request, model-response, and execution events include `payload.model_execution` when applicable:
@@ -148,7 +169,7 @@ Model-request, model-response, and execution events include `payload.model_execu
 ## Content, redaction, and access tiers
 
 - `content.capture` is one of `metadata_only`, `redacted_body`, or `restricted_body`.
-- `content.body_ref` points to separately retained content only when body capture is explicitly enabled.
+- `content.body_ref` points to separately retained content only when body capture is explicitly enabled. Using Agent Proxy explicitly enables restricted model request and response capture for that call.
 - `content.body_sha256` hashes the retained canonical byte sequence. It is empty when no body is retained.
 - `content.redaction.status` is one of `not_captured`, `redacted`, `restricted`, or `withheld`.
 - `content.redaction.policy_version` identifies the redaction rules applied at capture or ingestion.
@@ -175,7 +196,7 @@ Model-request, model-response, and execution events include `payload.model_execu
 ## Producer and consumer rules
 
 - Producers generate stable ids before delivery and do not put secrets in the envelope.
-- Producers emit the smallest sufficient metadata-only record when body capture is not opted in.
+- Producers emit the smallest sufficient metadata-only record when body capture is not opted in. Agent Proxy model traffic is opted in by the choice to route through Agent Proxy.
 - Consumers validate schema version and required fields before materialization.
 - Consumers preserve unknown optional fields for forward compatibility.
 - Consumers never use trace, Ward, repository, or issue correlation as an authorization mechanism.

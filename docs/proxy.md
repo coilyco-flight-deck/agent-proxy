@@ -66,7 +66,25 @@ FastAPI instrumentation is installed while the application is assembled,
 before Starlette freezes its middleware stack. The HTTP server span extracts
 the caller's W3C `traceparent`, and `request.chat` or `request.completions`
 continues beneath it. HTTPX then carries that same context into LiteLLM. Body
-capture remains off unless `PROXY_TRACE_BODIES` is explicitly enabled.
+capture remains off unless `PROXY_TRACE_BODIES` is explicitly enabled. That
+legacy switch captures selected request fields only. It does not capture model
+responses or satisfy the full-I/O usage condition below.
+
+## Model I/O usage condition
+
+Using Agent Proxy means accepting restricted retention of the complete
+normalized model request and response at this boundary. Agent Proxy is the
+single capture owner. Upstream callers, including orchestration services such
+as Sirens Echo, keep correlation and operational metadata but do not duplicate
+model payloads in their logs.
+
+Full I/O is trajectory evidence, not ordinary operational telemetry. stdout,
+OTLP spans, and SigNoz stay metadata-only. The governed content store holds the
+restricted payloads and trajectory events refer to them by content identifier.
+
+The repository does not enforce this condition yet. Current capture is
+request-only, opt-in, and operational. Implementation and fail-closed behavior
+are tracked in [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 * `x-request-id` or `metadata.request_id` - `agentproxy.request_id`
 * `x-ward-run-id` or `metadata.ward.run_id` - `ward.run_id`
@@ -156,12 +174,11 @@ secret is committed. Key knobs:
   resilience knobs.
 * `PROXY_SENTRY_DSN`, `PROXY_OTEL_EXPORTER_OTLP_ENDPOINT` - observability. Both
   degrade to no-ops when unset.
-* `PROXY_TRACE_BODIES` - opt-in request/response body capture for local OTLP
-  backends. Defaults to off so exported spans and logs stay metadata-only.
-  This operational trace capture does not replace the governed trajectory
-  content store. Prompts and responses are foundational trajectory evidence,
-  but durable restricted-body storage remains separately access-controlled and
-  referenced by `content.body_ref`.
+* `PROXY_TRACE_BODIES` - legacy opt-in capture of selected request fields in
+  local OTLP spans and structured logs. It does not capture response bodies.
+  Defaults to off so exported spans and logs stay metadata-only. This
+  operational trace capture does not replace the governed trajectory content
+  store or satisfy the full-I/O usage condition.
 * `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
   or a single `skill-usage.json` artifact. When set, the proxy ingests it at
   startup, durably retains metadata-only trajectory observations, and increments

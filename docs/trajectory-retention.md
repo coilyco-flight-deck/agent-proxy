@@ -22,7 +22,22 @@ reach it, and Ward remains the authorization and lifecycle authority.
 Hot-path producers use `AsyncTrajectoryEmitter.emit_nowait()`. The emitter has a
 fixed queue bound, returns `False` instead of waiting when full, and moves the
 SQLite commit onto a worker thread. A model response never waits for
-materialization, evaluation, or a cold-path storage write.
+materialization, evaluation, or a cold-path storage write. This describes the
+current metadata-only emitter, not the mandatory full-I/O capture contract.
+
+## Restricted model I/O
+
+Using Agent Proxy opts each model call into retention of the complete normalized
+request and response as separate restricted content artifacts. The trajectory
+ledger carries their content references and hashes, not copied bodies. Callers
+retain correlation and operational metadata only, and stdout, OTLP, and SigNoz
+remain metadata-only.
+
+The successful request path must receive a bounded durable acknowledgement for
+both artifacts. Capture failure fails closed. The current SQLite event ledger
+does not yet provide the external restricted-content store or this request-path
+guarantee. That implementation, including retry and streaming semantics, is
+tracked in [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 ## Immutable ledger
 
