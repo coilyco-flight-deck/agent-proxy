@@ -68,23 +68,29 @@ the caller's W3C `traceparent`, and `request.chat` or `request.completions`
 continues beneath it. HTTPX then carries that same context into LiteLLM. Body
 capture remains off unless `PROXY_TRACE_BODIES` is explicitly enabled. That
 legacy switch captures selected request fields only. It does not capture model
-responses or satisfy the full-I/O usage condition below.
+responses or satisfy the opt-in full-I/O contract below.
 
-## Model I/O usage condition
+## Model I/O capture contract
 
-Using Agent Proxy means accepting restricted retention of the complete
-normalized model request and response at this boundary. Agent Proxy is the
-single capture owner. Upstream callers, including orchestration services such
-as Sirens Echo, keep correlation and operational metadata but do not duplicate
-model payloads in their logs.
+Body capture is opt-in and defaults off. When enabled, Agent Proxy captures
+every field in both the complete normalized request body and the complete
+normalized response body. This includes messages or prompts, tool definitions
+and calls, model-visible options, generated content, reasoning content, usage,
+and finish state when present. There is no selected-field or request-only
+capture mode. Transport credentials and hop-by-hop headers are not model I/O
+and remain excluded.
 
-Full I/O is trajectory evidence, not ordinary operational telemetry. stdout,
-OTLP spans, and SigNoz stay metadata-only. The governed content store holds the
-restricted payloads and trajectory events refer to them by content identifier.
+Agent Proxy is the single capture owner. Upstream callers, including
+orchestration services such as Sirens Echo, keep correlation and operational
+metadata but do not duplicate model payloads in their logs. With capture off,
+stdout, OTLP spans, and SigNoz stay metadata-only. With capture on, body-bearing
+structured logs and trace attributes contain the complete request and response
+bodies. The configured OTLP or SigNoz sink must be governed as restricted model
+content accordingly.
 
 The repository does not enforce this condition yet. Current capture is
-request-only, opt-in, and operational. Implementation and fail-closed behavior
-are tracked in [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
+request-only, opt-in, and operational. Complete request and response capture is
+tracked in [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 * `x-request-id` or `metadata.request_id` - `agentproxy.request_id`
 * `x-ward-run-id` or `metadata.ward.run_id` - `ward.run_id`
@@ -174,11 +180,11 @@ secret is committed. Key knobs:
   resilience knobs.
 * `PROXY_SENTRY_DSN`, `PROXY_OTEL_EXPORTER_OTLP_ENDPOINT` - observability. Both
   degrade to no-ops when unset.
-* `PROXY_TRACE_BODIES` - legacy opt-in capture of selected request fields in
-  local OTLP spans and structured logs. It does not capture response bodies.
-  Defaults to off so exported spans and logs stay metadata-only. This
-  operational trace capture does not replace the governed trajectory content
-  store or satisfy the full-I/O usage condition.
+* `PROXY_TRACE_BODIES` - opt-in model I/O capture, defaulting to off. The
+  contract requires every request and response body field when enabled. The
+  current implementation is incomplete because it captures selected request
+  fields only and no response body. Completion is tracked in
+  [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 * `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
   or a single `skill-usage.json` artifact. When set, the proxy ingests it at
   startup, durably retains metadata-only trajectory observations, and increments

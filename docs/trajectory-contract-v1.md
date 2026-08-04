@@ -117,23 +117,23 @@ Large state, prompts, responses, file bodies, and tool outputs belong in `*_ref`
 
 ### Agent Proxy model I/O profile
 
-Routing a model call through Agent Proxy opts that call into restricted capture
-of its complete normalized request and response. The two directions are
-separate restricted content artifacts with their own references and hashes.
-They include messages or prompts, tool definitions and calls, model-visible
-options, generated content, reasoning content, and finish state when present.
-They exclude transport credentials and hop-by-hop headers.
+Agent Proxy model body capture is opt-in and defaults off. Enabling it captures
+every field in the complete normalized request and response bodies. The two
+directions are separate restricted content artifacts with their own references
+and hashes. They include messages or prompts, tool definitions and calls,
+model-visible options, generated content, reasoning content, usage, and finish
+state when present. They exclude transport credentials and hop-by-hop headers.
 
 Retries, fallbacks, tool continuations, repair turns, streaming assembly, and
 terminal failures preserve enough separate content references and causation to
-reconstruct what the model received and produced at each attempt. A successful
-response requires durable acknowledgement of its request and response content.
-If capture cannot be acknowledged within the bounded request-path policy,
-Agent Proxy fails closed.
+reconstruct what the model received and produced at each attempt. When capture
+is enabled, a successful response requires acknowledgement of both its complete
+request and response content. Capture must not silently degrade to selected
+fields or request-only evidence.
 
-Other producers remain metadata-only unless their own contract opts into body
-capture. Agent Proxy callers must not duplicate model payloads into their logs.
-Runtime enforcement is tracked in
+Other producers and Agent Proxy calls with capture disabled remain metadata-only
+unless their own contract opts into body capture. Agent Proxy callers must not
+duplicate model payloads into their logs. Runtime enforcement is tracked in
 [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 ## Model execution facts
@@ -169,7 +169,7 @@ Model-request, model-response, and execution events include `payload.model_execu
 ## Content, redaction, and access tiers
 
 - `content.capture` is one of `metadata_only`, `redacted_body`, or `restricted_body`.
-- `content.body_ref` points to separately retained content only when body capture is explicitly enabled. Using Agent Proxy explicitly enables restricted model request and response capture for that call.
+- `content.body_ref` points to separately retained content only when body capture is explicitly enabled. Enabling Agent Proxy body capture requires complete restricted request and response capture for that call.
 - `content.body_sha256` hashes the retained canonical byte sequence. It is empty when no body is retained.
 - `content.redaction.status` is one of `not_captured`, `redacted`, `restricted`, or `withheld`.
 - `content.redaction.policy_version` identifies the redaction rules applied at capture or ingestion.
@@ -196,7 +196,7 @@ Model-request, model-response, and execution events include `payload.model_execu
 ## Producer and consumer rules
 
 - Producers generate stable ids before delivery and do not put secrets in the envelope.
-- Producers emit the smallest sufficient metadata-only record when body capture is not opted in. Agent Proxy model traffic is opted in by the choice to route through Agent Proxy.
+- Producers emit the smallest sufficient metadata-only record when body capture is not opted in. Agent Proxy capture is an explicit deployment opt-in, not an automatic consequence of routing through the proxy.
 - Consumers validate schema version and required fields before materialization.
 - Consumers preserve unknown optional fields for forward compatibility.
 - Consumers never use trace, Ward, repository, or issue correlation as an authorization mechanism.

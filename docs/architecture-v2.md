@@ -29,15 +29,16 @@ The hot path is latency-sensitive. It owns only work that must happen before, du
 - Enforce Agent Proxy policy that is not commodity provider routing.
 - Capture correlation with trace, span, Ward run, episode, agent session, request, repository, issue, and workflow identities.
 - Apply context-safety controls and cheap structural detectors.
-- Retain the complete normalized model request and response as restricted
-  trajectory content, excluding transport credentials and hop-by-hop headers.
+- When body capture is enabled, capture every field in the complete normalized
+  model request and response bodies, excluding transport credentials and
+  hop-by-hop headers.
 - Normalize small operational facts such as outcome, tokens, latency, retry, fallback, and finish information.
 - Emit bounded events asynchronously with explicit failure handling.
 
-The hot path may wait for a bounded durable-content acknowledgement because
-full-I/O retention is a condition of using Agent Proxy. It never synchronously
-waits for trajectory materialization, evaluation, training export, bulk body
-processing, or expensive ML analysis.
+When full-I/O capture is enabled, the hot path may wait for a bounded capture
+acknowledgement so it cannot silently degrade to partial or request-only
+evidence. It never synchronously waits for trajectory materialization,
+evaluation, training export, bulk body processing, or expensive ML analysis.
 
 The commodity gateway integration is a standalone LiteLLM Proxy, not an
 embedded SDK. Agent Proxy authenticates from a mounted key file, validates
@@ -82,10 +83,11 @@ OTLP and SigNoz receive logs, metrics, and traces for live operational visibilit
 1. A harness invokes the OpenAI-compatible surface with a logical route key and available Ward correlation metadata.
 2. Agent Proxy validates the mounted route, then performs identity, policy, correlation, context safety, and cheap structural checks.
 3. The commodity gateway sends inference work to the selected provider. The current in-repository gateway remains in this role until issue #41 proves LiteLLM parity.
-4. Agent Proxy durably captures the complete normalized request and response as
-   separately restricted content, emits small versioned events containing
-   content references, and returns success only after bounded capture
-   acknowledgement. It does not wait for cold-path materialization.
+4. When body capture is enabled, Agent Proxy captures every field in the
+   complete normalized request and response bodies as separately restricted
+   content and emits versioned events containing their references. With capture
+   disabled, it emits metadata-only evidence. It does not wait for cold-path
+   materialization.
 5. The cold path validates, durably retains, and replays raw events as needed.
 6. Materializers assemble episodes and trajectories. Evaluators and annotation systems join evidence to those records.
 7. Dataset exporters and operational views consume versioned, access-controlled derived records with their provenance.
@@ -112,16 +114,17 @@ Evaluation is evidence collection and analysis. It does not authorize or execute
 
 - **Metadata tier** retains correlation, operational measurements, identifiers, hashes, policy outcomes, and references. It is the default event capture tier.
 - **Redacted content tier** retains content only after configured redaction. Access is limited to approved operational and dataset-building roles.
-- **Restricted body tier** retains complete normalized model requests and
-  responses when traffic uses Agent Proxy. Choosing Agent Proxy is the explicit
-  opt-in. Transport credentials and hop-by-hop headers are never part of the
-  captured model I/O.
+- **Restricted body tier** retains every field in complete normalized model
+  request and response bodies only when body capture is explicitly enabled.
+  Capture defaults off. Transport credentials and hop-by-hop headers are never
+  part of the captured model I/O.
 - Event envelopes record `redaction.status`, `redaction.policy_version`, `capture.body`, and content references so consumers do not assume body availability.
 - Raw retention has a documented retention class and access tier. Derived datasets retain source ids, hashes, transform versions, and their applicable redaction policy.
 - Callers retain correlation and operational metadata but do not duplicate
-  model payloads. stdout, OTLP, and SigNoz remain metadata-only.
+  model payloads. stdout, OTLP, and SigNoz remain metadata-only when capture is
+  disabled. Body-bearing records require restricted handling when it is enabled.
 - Deletion, legal hold, retention expiry, and access-audit implementation details are future work. Producers must make these controls enforceable by avoiding implicit body copies.
-- Runtime enforcement and the governed external content store remain tracked in
+- Runtime enforcement of opt-in complete request and response capture remains tracked in
   [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 ## Migration inventory
@@ -169,8 +172,9 @@ projections, not the persistence mechanism.
 - LiteLLM does not absorb Agent Proxy identity, policy, correlation, context safety, or trajectory responsibilities.
 - Agent Proxy does not absorb Ward authorization or execution authority.
 - Heavy processing stays off the request path.
-- A successful Agent Proxy model response has a durable acknowledgement for its
-  restricted request and response content. Capture failure fails the request
-  closed.
+- When capture is enabled, every successful Agent Proxy model response has a
+  capture acknowledgement for the complete restricted request and response
+  bodies. Capture must not silently degrade to selected fields or request-only
+  evidence.
 - SigNoz and OTLP never become the sole durable trajectory store.
 - Historical issues are evidence only. New v2 implementation work uses the fresh issue graph.

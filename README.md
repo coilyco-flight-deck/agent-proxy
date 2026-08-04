@@ -14,22 +14,26 @@ The repository is in transition. The OpenAI-compatible reliability proxy remains
 
 Heavy data processing stays out of the latency-sensitive model request path. The target architecture and migration dispositions are in [`docs/architecture-v2.md`](docs/architecture-v2.md). Independent producers and consumers implement against [`docs/trajectory-contract-v1.md`](docs/trajectory-contract-v1.md).
 
-## Model I/O usage contract
+## Model I/O capture contract
 
-Routing model traffic through Agent Proxy is consent to restricted retention of
-the complete normalized model request and response at the Agent Proxy boundary.
+Model body capture is opt-in and defaults off. When enabled, Agent Proxy
+captures the complete normalized request and response body for every routed
+model call. Complete means every model I/O field present at the Agent Proxy
+boundary. There is no selected-field or request-only capture mode.
+
 Agent Proxy owns that capture so callers and wrappers do not duplicate prompt,
-response, or tool payloads in their own logs.
+response, or tool payloads in their own logs. Transport credentials and
+hop-by-hop headers are not model I/O and are never included.
 
-Ordinary application logs, OTLP spans, and SigNoz remain metadata-only. Full
-model I/O belongs in the governed trajectory content store, referenced by
-restricted content identifiers with retention, access-audit, and deletion
-controls.
+When capture is disabled, application logs, OTLP spans, and SigNoz remain
+metadata-only. When capture is enabled, Agent Proxy writes the complete bodies
+to its structured logs and trace attributes. Any receiving OTLP or SigNoz sink
+therefore requires the restricted controls appropriate for model content.
 
-This is the accepted usage contract, not yet an enforced runtime guarantee.
-Current `PROXY_TRACE_BODIES` support is opt-in and captures selected request
-fields only. [Issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77)
-tracks complete request and response capture plus fail-closed enforcement.
+This is the accepted contract, not yet an enforced runtime guarantee. Current
+`PROXY_TRACE_BODIES` support captures selected request fields only and does not
+capture responses. [Issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77)
+tracks complete request and response capture.
 
 ## Implemented today
 
