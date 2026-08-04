@@ -57,8 +57,10 @@ Status legend:
 
 - **Opt-in complete model I/O capture** - planned - when body capture is
   enabled, every model call routed through Agent Proxy captures every field in
-  its normalized request and response bodies. Disabled capture remains
-  metadata-only, and enabled capture uses restricted handling. See
+  its normalized request and response bodies. The repository implementation is
+  complete, but the capability remains planned until deployment and live
+  SigNoz verification pass. Disabled capture remains metadata-only, and enabled
+  capture uses restricted handling. See
   [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 - **LiteLLM commodity behavior retirement** - planned - joined live evidence must still prove context delivery, trace continuity, retry ownership, and rollback before Agent Proxy provider routing, retries, fallbacks, queueing, or circuit behavior can retire.
 ## References

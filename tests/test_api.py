@@ -70,6 +70,18 @@ def _span_attrs(spans, name):
     return matches[-1]
 
 
+def _capture_events(capsys):
+    events = []
+    for line in capsys.readouterr().out.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("event") in {"model.request.captured", "model.response.captured"}:
+            events.append(payload)
+    return events
+
+
 def test_error_response_records_closed_set_exception(monkeypatch):
     recorded = []
     monkeypatch.setattr("app.main.record_error", recorded.append)
@@ -552,6 +564,8 @@ def test_chat_completion_preserves_remote_trace_context(client):
     assert server_span.parent.span_id == int(remote_span_id, 16)
     assert "agentproxy.messages" not in request_span.attributes
     assert "agentproxy.tools" not in request_span.attributes
+    assert "agentproxy.request.body" not in request_span.attributes
+    assert "agentproxy.response.body" not in request_span.attributes
 
 
 def test_chat_completion_ingests_ward_headers(client, monkeypatch):
@@ -800,3 +814,295 @@ def test_completions_surface(client):
     body = resp.json()
     assert body["object"] == "text_completion"
     assert body["choices"][0]["text"] == "Paris"
+
+
+def test_chat_capture_contains_every_request_and_response_field(client, monkeypatch, capsys):
+    exporter = InMemorySpanExporter()
+    trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(exporter))
+    exporter.clear()
+    monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
+
+    async def captured_chat(
+        backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None
+    ):
+        return UpstreamResult(
+            model=backend.ollama_tag,
+            content="Paris",
+            thinking="The capital is well known.",
+            tool_calls=[{"function": {"name": "lookup", "arguments": {"city": "Paris"}}}],
+            prompt_eval_count=42,
+            eval_count=3,
+        )
+
+    monkeypatch.setattr(upstream, "chat", captured_chat)
+    capsys.readouterr()
+    request_body = {
+        "model": "qwen3:4b",
+        "messages": [{"role": "user", "content": "capital of France?"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "lookup", "parameters": {"type": "object"}},
+            }
+        ],
+        "temperature": 0.25,
+        "response_format": {"type": "json_object"},
+        "metadata": {"fixture": {"nested": [1, 2, 3]}},
+        "vendor_extension": {"preserved": True},
+    }
+    response = client.post(
+        "/v1/chat/completions",
+        json=request_body,
+        headers={"authorization": "Bearer must-not-be-captured", "x-request-id": "capture-chat"},
+    )
+
+    assert response.status_code == 200
+    events = _capture_events(capsys)
+    assert [event["event"] for event in events] == [
+        "model.request.captured",
+        "model.response.captured",
+    ]
+    assert events[0]["request.body"] == request_body
+    assert events[1]["response.body"] == response.json()
+    assert "authorization" not in json.dumps(events)
+    assert events[0]["trace_id"] == events[1]["trace_id"]
+    assert events[0]["span_id"] == events[1]["span_id"]
+    assert events[0]["agentproxy.request_id"] == "capture-chat"
+
+    request_span = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.name == "request.chat"
+        and span.attributes.get("agentproxy.request_id") == "capture-chat"
+    )
+    assert json.loads(request_span.attributes["agentproxy.request.body"]) == request_body
+    assert json.loads(request_span.attributes["agentproxy.response.body"]) == response.json()
+
+
+def test_stream_capture_reconstructs_reasoning_tools_usage_and_finish(client, monkeypatch, capsys):
+    monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
+
+    async def fake_dispatch_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+        yield {
+            "message": {"content": "Par", "thinking": "known "},
+            "done": False,
+        }
+        yield {
+            "message": {
+                "content": "is",
+                "thinking": "answer",
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call-fixture",
+                        "type": "function",
+                        "function": {"name": "look_", "arguments": '{"city":"Par'},
+                    }
+                ],
+            },
+            "done": False,
+        }
+        yield {
+            "message": {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "function": {"name": "up", "arguments": 'is"}'},
+                    }
+                ]
+            },
+            "done": True,
+            "done_reason": "stop",
+            "prompt_eval_count": 7,
+            "eval_count": 4,
+        }
+
+    monkeypatch.setattr(resilience, "dispatch_stream", fake_dispatch_stream)
+    capsys.readouterr()
+    request_body = {
+        "model": "qwen3:4b",
+        "stream": True,
+        "messages": [{"role": "user", "content": "capital?"}],
+        "stream_options": {"include_usage": True},
+    }
+    response = client.post(
+        "/v1/chat/completions",
+        json=request_body,
+        headers={"x-request-id": "capture-stream"},
+    )
+
+    assert response.status_code == 200
+    assert "reasoning_content" in response.text
+    assert "tool_calls" in response.text
+    events = _capture_events(capsys)
+    assert len(events) == 2
+    assert events[0]["request.body"] == request_body
+    captured = events[1]["response.body"]
+    message = captured["choices"][0]["message"]
+    assert message["content"] == "Paris"
+    assert message["reasoning_content"] == "known answer"
+    assert message["tool_calls"] == [
+        {
+            "id": "call-fixture",
+            "type": "function",
+            "function": {"name": "look_up", "arguments": '{"city":"Paris"}'},
+        }
+    ]
+    assert captured["choices"][0]["finish_reason"] == "tool_calls"
+    assert captured["usage"] == {
+        "prompt_tokens": 7,
+        "completion_tokens": 4,
+        "total_tokens": 11,
+    }
+
+
+def test_text_completion_capture_uses_normalized_prompt_and_full_response(
+    client, monkeypatch, capsys
+):
+    monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
+    capsys.readouterr()
+
+    response = client.post(
+        "/v1/completions",
+        json={
+            "model": "qwen3:4b",
+            "prompt": ["hello", "world"],
+            "temperature": 0.1,
+            "suffix": "preserved",
+        },
+        headers={"x-request-id": "capture-completion"},
+    )
+
+    assert response.status_code == 200
+    events = _capture_events(capsys)
+    assert len(events) == 2
+    assert events[0]["request.body"] == {
+        "model": "qwen3:4b",
+        "prompt": "hello\nworld",
+        "temperature": 0.1,
+        "suffix": "preserved",
+    }
+    assert events[1]["response.body"] == response.json()
+
+
+def test_mcp_prompt_capture_uses_mcp_boundary_shapes(client, monkeypatch, capsys):
+    monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
+    capsys.readouterr()
+
+    response = _mcp_post(
+        client,
+        "tools/call",
+        {
+            "name": "send_prompt",
+            "arguments": {
+                "prompt": "capital of France?",
+                "model": "qwen3:4b",
+                "system_prompt": "Answer briefly.",
+                "max_tokens": 32,
+                "temperature": 0.2,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    events = _capture_events(capsys)
+    assert len(events) == 2
+    assert events[0]["request.body"] == {
+        "prompt": "capital of France?",
+        "model": "qwen3:4b",
+        "system_prompt": "Answer briefly.",
+        "max_tokens": 32,
+        "temperature": 0.2,
+    }
+    assert events[1]["response.body"] == response.json()["result"]["structuredContent"]
+
+
+def test_mcp_prompt_capture_records_incomplete_upstream_failure(client, monkeypatch, capsys):
+    class FailingQueue:
+        async def submit(self, *_args, **_kwargs):
+            raise resilience.AllBackendsFailed("fixture upstream failure")
+
+    monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
+    monkeypatch.setattr("app.main.get_queue", lambda: FailingQueue())
+    capsys.readouterr()
+
+    response = _mcp_post(
+        client,
+        "tools/call",
+        {
+            "name": "send_prompt",
+            "arguments": {"prompt": "fail", "model": "qwen3:4b"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["isError"] is True
+    events = _capture_events(capsys)
+    assert len(events) == 2
+    assert events[1]["agentproxy.capture.status"] == "incomplete"
+    assert events[1]["agentproxy.capture.reason"] == "upstream_failed"
+    assert events[1]["response.body"]["error"]["type"] == "upstream_error"
+
+
+@pytest.mark.parametrize(
+    "path,body,request_id",
+    [
+        (
+            "/v1/chat/completions",
+            {"model": "qwen3:4b", "messages": [{"role": "user", "content": "fail"}]},
+            "capture-chat-failure",
+        ),
+        (
+            "/v1/completions",
+            {"model": "qwen3:4b", "prompt": "fail"},
+            "capture-completion-failure",
+        ),
+    ],
+)
+def test_http_capture_records_incomplete_upstream_failures(
+    client, monkeypatch, capsys, path, body, request_id
+):
+    class FailingQueue:
+        async def submit(self, *_args, **_kwargs):
+            raise resilience.AllBackendsFailed("fixture upstream failure")
+
+    monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
+    monkeypatch.setattr("app.main.get_queue", lambda: FailingQueue())
+    capsys.readouterr()
+
+    response = client.post(path, json=body, headers={"x-request-id": request_id})
+
+    assert response.status_code == 502
+    events = _capture_events(capsys)
+    assert len(events) == 2
+    assert events[1]["agentproxy.capture.status"] == "incomplete"
+    assert events[1]["agentproxy.capture.reason"] == "upstream_failed"
+    assert events[1]["response.body"] == response.json()
+
+
+def test_stream_capture_records_partial_response_on_failure(client, monkeypatch, capsys):
+    monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
+
+    async def failing_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+        yield {"message": {"content": "partial"}, "done": False}
+        raise resilience.AllBackendsFailed("stream interrupted")
+
+    monkeypatch.setattr(resilience, "dispatch_stream", failing_stream)
+    capsys.readouterr()
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "stream": True,
+            "messages": [{"role": "user", "content": "fail"}],
+        },
+        headers={"x-request-id": "capture-stream-failure"},
+    )
+
+    assert response.status_code == 200
+    events = _capture_events(capsys)
+    assert len(events) == 2
+    assert events[1]["agentproxy.capture.status"] == "incomplete"
+    assert events[1]["agentproxy.capture.reason"] == "stream_failed"
+    assert events[1]["response.body"]["choices"][0]["message"]["content"] == "partial"

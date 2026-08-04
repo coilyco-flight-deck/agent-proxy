@@ -197,3 +197,47 @@ async def test_disconnect_cancels_upstream_and_releases_capacity(monkeypatch, ca
             or span.attributes.get("agentproxy.upstream.outcome") == "cancelled"
         )
         assert event in {record.name for record in span.events}
+
+
+async def test_enabled_capture_records_cancelled_response_as_incomplete(monkeypatch, capsys):
+    model = LogicalModel(
+        name="community/conversation-management",
+        num_ctx=4096,
+        backends=[],
+        upstream_mode="litellm",
+    )
+
+    async def resolve_model(name: str) -> LogicalModel | None:
+        return model if name == model.name else None
+
+    class CancellingQueue:
+        async def submit(self, *_args, **_kwargs):
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(main, "resolve", resolve_model)
+    monkeypatch.setattr(main, "get_queue", lambda: CancellingQueue())
+    monkeypatch.setattr(main, "is_trace_bodies_enabled", lambda: True)
+    capsys.readouterr()
+    request, _ = _request(
+        {
+            "model": model.name,
+            "messages": [{"role": "user", "content": "cancel me"}],
+            "metadata": {"request_id": "capture-cancelled"},
+        }
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await main.chat_completions(request)
+
+    events = []
+    for line in capsys.readouterr().out.splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("event") in {"model.request.captured", "model.response.captured"}:
+            events.append(record)
+    assert len(events) == 2
+    assert events[1]["agentproxy.capture.status"] == "incomplete"
+    assert events[1]["agentproxy.capture.reason"] == "cancelled"
+    assert events[1]["response.body"] == {}

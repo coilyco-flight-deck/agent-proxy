@@ -66,9 +66,9 @@ FastAPI instrumentation is installed while the application is assembled,
 before Starlette freezes its middleware stack. The HTTP server span extracts
 the caller's W3C `traceparent`, and `request.chat` or `request.completions`
 continues beneath it. HTTPX then carries that same context into LiteLLM. Body
-capture remains off unless `PROXY_TRACE_BODIES` is explicitly enabled. That
-legacy switch captures selected request fields only. It does not capture model
-responses or satisfy the opt-in full-I/O contract below.
+capture remains off unless `PROXY_TRACE_BODIES` is explicitly enabled. When it
+is enabled, the request span owns the strict complete request and response
+capture contract below.
 
 ## Model I/O capture contract
 
@@ -88,9 +88,10 @@ structured logs and trace attributes contain the complete request and response
 bodies. The configured OTLP or SigNoz sink must be governed as restricted model
 content accordingly.
 
-The repository does not enforce this condition yet. Current capture is
-request-only, opt-in, and operational. Complete request and response capture is
-tracked in [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
+The repository enforces this condition for non-streaming chat, reconstructed
+streaming chat, text completions, and MCP prompt calls. Deployment enablement,
+restricted sink handling, and live SigNoz verification remain tracked in
+[issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 ### SigNoz content viewing contract
 
@@ -113,10 +114,21 @@ canonical JSON strings under `agentproxy.request.body` and
 present. A failed, cancelled, or interrupted response emits
 `model.response.captured` with `agentproxy.capture.status=incomplete`, every
 response field available at the boundary, and a closed-set
-`agentproxy.capture.reason`.
+`agentproxy.capture.reason`. The reason is one of `cancelled`,
+`context_truncated`, `interrupted`, `queue_rejected`, `response_failed`,
+`stream_failed`, or `upstream_failed`.
 Streaming capture reconstructs the complete normalized response returned to the
 caller. When capture is disabled, none of these body events or attributes are
 emitted.
+
+Chat capture preserves every accepted request field and records the
+post-context-guard message list. Text completion capture preserves every field
+and records a list prompt in its normalized joined-string form. MCP prompt
+capture records the MCP tool arguments and the exact structured tool result,
+not a duplicate synthetic OpenAI boundary. Capture serializes canonical JSON
+before dispatch and before response delivery. Serialization, span attachment,
+or structured-log delivery failure raises a hard capture error rather than
+reporting a successful model response with incomplete evidence.
 
 SigNoz Logs is the primary content viewer because it retains the structured JSON
 objects. From the Agent Proxy `request.chat` or `request.completions` span, use
@@ -214,9 +226,9 @@ secret is committed. Key knobs:
 * `PROXY_SENTRY_DSN`, `PROXY_OTEL_EXPORTER_OTLP_ENDPOINT` - observability. Both
   degrade to no-ops when unset.
 * `PROXY_TRACE_BODIES` - opt-in model I/O capture, defaulting to off. The
-  contract requires every request and response body field when enabled. The
-  current implementation is incomplete because it captures selected request
-  fields only and no response body. Completion is tracked in
+  repository implementation captures every request and response body field when
+  enabled and fails hard on capture loss. Deployment and live verification are
+  tracked in
   [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 * `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
   or a single `skill-usage.json` artifact. When set, the proxy ingests it at

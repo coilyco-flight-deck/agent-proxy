@@ -16,7 +16,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -27,6 +27,7 @@ from prometheus_client import CONTENT_TYPE_LATEST
 
 from . import resilience, upstream
 from .analysis import apply_context_budget
+from .body_capture import BodyCaptureError, CaptureReason, CaptureStatus, ModelBodyCapture
 from .config import get_settings
 from .models import RouteUnavailable, list_tags, resolve
 from .skill_use import ingest_skill_use_source
@@ -260,16 +261,52 @@ def _chat_completion_response(model_name: str, result: upstream.UpstreamResult) 
     }
 
 
+def _error_body(message: str, err_type: str) -> dict[str, Any]:
+    return {"error": {"message": message, "type": err_type}}
+
+
 def _error(status: int, message: str, err_type: str) -> JSONResponse:
     record_error(err_type)
-    return JSONResponse(
-        status_code=status, content={"error": {"message": message, "type": err_type}}
-    )
+    return JSONResponse(status_code=status, content=_error_body(message, err_type))
 
 
-def _request_trace_extra(
-    headers, metadata: Any = None, *, body_extra: dict[str, object] | None = None
-) -> dict[str, object]:
+def _emit_capture_request(capture: ModelBodyCapture, span: Any | None) -> None:
+    try:
+        capture.emit_request(span)
+    except BodyCaptureError:
+        record_error("body_capture_failed", span)
+        raise
+
+
+def _emit_capture_response(
+    capture: ModelBodyCapture,
+    span: Any | None,
+    body: dict[str, Any],
+    *,
+    status: CaptureStatus = "complete",
+    reason: CaptureReason | None = None,
+) -> None:
+    try:
+        capture.emit_response(span, body, status=status, reason=reason)
+    except BodyCaptureError:
+        record_error("body_capture_failed", span)
+        raise
+
+
+def _capture_response_body(
+    capture: ModelBodyCapture,
+    body: dict[str, Any],
+    transform: Callable[[dict[str, Any]], dict[str, Any]] | None,
+) -> dict[str, Any]:
+    if not capture.enabled or transform is None:
+        return body
+    try:
+        return transform(body)
+    except Exception as exc:
+        raise BodyCaptureError("failed to normalize boundary response capture") from exc
+
+
+def _request_trace_extra(headers, metadata: Any = None) -> dict[str, object]:
     extra: dict[str, object] = {}
     if isinstance(metadata, dict):
         for target_key, source_keys in _TRACE_METADATA_FIELDS.items():
@@ -286,8 +323,6 @@ def _request_trace_extra(
             if value:
                 extra[target_key] = value
                 break
-    if body_extra:
-        extra.update(body_extra)
     return extra
 
 
@@ -375,6 +410,99 @@ async def list_models() -> dict[str, Any]:
     }
 
 
+def _merge_stream_tool_calls(
+    calls: list[dict[str, Any]],
+    assembled: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize tool-call deltas and merge their fragments by OpenAI index."""
+
+    deltas: list[dict[str, Any]] = []
+    for fallback_index, call in enumerate(calls):
+        raw_index = call.get("index", fallback_index)
+        index = raw_index if isinstance(raw_index, int) else fallback_index
+        current = assembled.setdefault(
+            index,
+            {
+                "id": f"call_{uuid.uuid4().hex[:12]}_{index}",
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            },
+        )
+        if call_id := call.get("id"):
+            current["id"] = str(call_id)
+        if call_type := call.get("type"):
+            current["type"] = str(call_type)
+
+        function = call.get("function", call)
+        delta_function: dict[str, str] = {}
+        if isinstance(function, dict):
+            if name := function.get("name"):
+                name_piece = str(name)
+                current["function"]["name"] += name_piece
+                delta_function["name"] = name_piece
+            if "arguments" in function:
+                arguments = function.get("arguments")
+                if isinstance(arguments, str):
+                    current["function"]["arguments"] += arguments
+                    delta_function["arguments"] = arguments
+                else:
+                    encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+                    current["function"]["arguments"] = encoded
+                    delta_function["arguments"] = encoded
+
+        delta: dict[str, Any] = {
+            "index": index,
+            "id": current["id"],
+            "type": current["type"],
+        }
+        if delta_function:
+            delta["function"] = delta_function
+        deltas.append(delta)
+    return deltas
+
+
+def _stream_chat_response(
+    model_name: str,
+    completion_id: str,
+    created: int,
+    content_parts: list[str],
+    reasoning_parts: list[str],
+    tool_calls: dict[int, dict[str, Any]],
+    finish_reason: str,
+    terminal_result: upstream.UpstreamResult | None,
+) -> dict[str, Any]:
+    """Reconstruct the complete normalized response represented by an SSE stream."""
+
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(content_parts)}
+    if reasoning_parts:
+        message["reasoning_content"] = "".join(reasoning_parts)
+    if tool_calls:
+        message["tool_calls"] = [tool_calls[index] for index in sorted(tool_calls)]
+        if not message["content"]:
+            message["content"] = None
+
+    prompt_tokens = terminal_result.prompt_eval_count if terminal_result is not None else 0
+    completion_tokens = terminal_result.eval_count if terminal_result is not None else 0
+    return {
+        "id": completion_id,
+        "object": "chat.completion",
+        "created": created,
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+
+
 async def _stream_chat(
     model,
     messages,
@@ -386,6 +514,7 @@ async def _stream_chat(
     request_span: Any | None,
     lifecycle: RequestLifecycle,
     started: float,
+    capture: ModelBodyCapture,
 ) -> StreamingResponse:
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -399,88 +528,165 @@ async def _stream_chat(
             "created": created,
             "model": model_name,
         }
-        # Prime with the assistant role delta (OpenAI clients expect it first).
-        first = {
-            **base,
-            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
-        }
-        yield f"data: {json.dumps(first)}\n\n"
         finish = "stop"
         outcome = "ok"
         terminal_result: upstream.UpstreamResult | None = None
         terminal_span = request_span
+        span_cm = tracer.start_as_current_span("request.chat") if tracer is not None else None
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
         try:
-            if tracer is None:
-                log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
-                async for chunk in resilience.dispatch_stream(
-                    model, messages, tools=tools, options=options, trace_ctx=trace_ctx
-                ):
-                    msg = chunk.get("message") or {}
-                    piece = msg.get("content") or ""
-                    if piece:
-                        delta = {
-                            **base,
-                            "choices": [
-                                {"index": 0, "delta": {"content": piece}, "finish_reason": None}
-                            ],
-                        }
-                        yield f"data: {json.dumps(delta)}\n\n"
-                    if chunk.get("done"):
-                        finish = "length" if chunk.get("done_reason") == "length" else "stop"
-                        terminal_result = upstream.parse_stream_result(chunk, model_name)
-            else:
-                with tracer.start_as_current_span("request.chat") as span:
-                    terminal_span = span
-                    for key, value in trace_ctx.attrs().items():
-                        span.set_attribute(key, value)
-                    log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
-                    async for chunk in resilience.dispatch_stream(
-                        model, messages, tools=tools, options=options, trace_ctx=trace_ctx
-                    ):
-                        msg = chunk.get("message") or {}
-                        piece = msg.get("content") or ""
-                        if piece:
-                            delta = {
-                                **base,
-                                "choices": [
-                                    {"index": 0, "delta": {"content": piece}, "finish_reason": None}
-                                ],
-                            }
-                            yield f"data: {json.dumps(delta)}\n\n"
-                        if chunk.get("done"):
-                            finish = "length" if chunk.get("done_reason") == "length" else "stop"
-                            terminal_result = upstream.parse_stream_result(chunk, model_name)
-                            upstream.set_result_span_attributes(span, terminal_result)
-        except asyncio.CancelledError:
-            _mark_cancelled_span(terminal_span, "request.cancelled")
-            log_on_span(
-                terminal_span,
-                "request.completed",
-                **trace_ctx.attrs(),
-                outcome="cancelled",
-            )
-            _emit_request_terminal(lifecycle, "cancelled", started=started)
+            if span_cm is not None:
+                terminal_span = span_cm.__enter__()
+            for key, value in trace_ctx.attrs().items():
+                if terminal_span is not None:
+                    terminal_span.set_attribute(key, value)
+            _emit_capture_request(capture, terminal_span)
+            log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
+
+            # Prime with the assistant role delta only after capture is guaranteed.
+            first = {
+                **base,
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(first)}\n\n"
+
+            async for chunk in resilience.dispatch_stream(
+                model, messages, tools=tools, options=options, trace_ctx=trace_ctx
+            ):
+                msg = chunk.get("message") or {}
+                response_delta: dict[str, Any] = {}
+                piece = msg.get("content") or ""
+                if piece:
+                    content_piece = str(piece)
+                    content_parts.append(content_piece)
+                    response_delta["content"] = content_piece
+                reasoning = msg.get("thinking") or msg.get("reasoning_content") or ""
+                if reasoning:
+                    reasoning_piece = str(reasoning)
+                    reasoning_parts.append(reasoning_piece)
+                    response_delta["reasoning_content"] = reasoning_piece
+                raw_tool_calls = msg.get("tool_calls") or []
+                if isinstance(raw_tool_calls, list) and raw_tool_calls:
+                    response_delta["tool_calls"] = _merge_stream_tool_calls(
+                        raw_tool_calls, tool_calls
+                    )
+                if response_delta:
+                    delta = {
+                        **base,
+                        "choices": [{"index": 0, "delta": response_delta, "finish_reason": None}],
+                    }
+                    yield f"data: {json.dumps(delta)}\n\n"
+                if chunk.get("done"):
+                    finish = "length" if chunk.get("done_reason") == "length" else "stop"
+                    terminal_result = upstream.parse_stream_result(chunk, model_name)
+                    if tool_calls and finish == "stop":
+                        finish = "tool_calls"
+                    if terminal_span is not None:
+                        upstream.set_result_span_attributes(terminal_span, terminal_result)
+        except (asyncio.CancelledError, GeneratorExit) as exc:
+            try:
+                capture_reason: CaptureReason = (
+                    "cancelled" if isinstance(exc, asyncio.CancelledError) else "interrupted"
+                )
+                _mark_cancelled_span(terminal_span, "request.cancelled")
+                partial = _stream_chat_response(
+                    model_name,
+                    completion_id,
+                    created,
+                    content_parts,
+                    reasoning_parts,
+                    tool_calls,
+                    finish,
+                    terminal_result,
+                )
+                _emit_capture_response(
+                    capture,
+                    terminal_span,
+                    partial,
+                    status="incomplete",
+                    reason=capture_reason,
+                )
+                log_on_span(
+                    terminal_span,
+                    "request.completed",
+                    **trace_ctx.attrs(),
+                    outcome="cancelled",
+                )
+                _emit_request_terminal(lifecycle, "cancelled", started=started)
+            finally:
+                if span_cm is not None:
+                    span_cm.__exit__(None, None, None)
             raise
         except AllBackendsFailed as exc:
             record_error("stream_failed", terminal_span)
             log.warning("stream.failed", **trace_ctx.attrs(), error=str(exc), outcome="failed")
             finish = "stop"
             outcome = "failed"
-        log_on_span(
-            terminal_span,
-            "request.completed",
-            **trace_ctx.attrs(),
-            outcome=outcome,
-        )
-        _emit_request_terminal(
-            lifecycle,
-            "succeeded" if outcome == "ok" else "stream_failed",
-            started=started,
-            result=terminal_result,
-        )
-        final = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
-        yield f"data: {json.dumps(final)}\n\n"
-        yield "data: [DONE]\n\n"
+        except BodyCaptureError:
+            if span_cm is not None:
+                span_cm.__exit__(None, None, None)
+            raise
+        except Exception:
+            try:
+                partial = _stream_chat_response(
+                    model_name,
+                    completion_id,
+                    created,
+                    content_parts,
+                    reasoning_parts,
+                    tool_calls,
+                    finish,
+                    terminal_result,
+                )
+                _emit_capture_response(
+                    capture,
+                    terminal_span,
+                    partial,
+                    status="incomplete",
+                    reason="stream_failed",
+                )
+            finally:
+                if span_cm is not None:
+                    span_cm.__exit__(None, None, None)
+            raise
+        try:
+            response_body = _stream_chat_response(
+                model_name,
+                completion_id,
+                created,
+                content_parts,
+                reasoning_parts,
+                tool_calls,
+                finish,
+                terminal_result,
+            )
+            _emit_capture_response(
+                capture,
+                terminal_span,
+                response_body,
+                status="complete" if outcome == "ok" else "incomplete",
+                reason=None if outcome == "ok" else "stream_failed",
+            )
+            log_on_span(
+                terminal_span,
+                "request.completed",
+                **trace_ctx.attrs(),
+                outcome=outcome,
+            )
+            _emit_request_terminal(
+                lifecycle,
+                "succeeded" if outcome == "ok" else "stream_failed",
+                started=started,
+                result=terminal_result,
+            )
+            final = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
+            yield f"data: {json.dumps(final)}\n\n"
+            yield "data: [DONE]\n\n"
+        finally:
+            if span_cm is not None:
+                span_cm.__exit__(None, None, None)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -529,7 +735,14 @@ async def chat_completions(request: Request) -> Response:
     return await _chat_completion_until_disconnect(request, body)
 
 
-async def _chat_completions(body: dict[str, Any], headers) -> Response:
+async def _chat_completions(
+    body: dict[str, Any],
+    headers,
+    *,
+    request_kind: str = "chat",
+    capture_request_body: dict[str, Any] | None = None,
+    capture_response_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> Response:
     requested_model = body.get("model")
     model_name = requested_model if isinstance(requested_model, str) else ""
     try:
@@ -553,19 +766,7 @@ async def _chat_completions(body: dict[str, Any], headers) -> Response:
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
-    trace_extra = _request_trace_extra(
-        headers,
-        body.get("metadata"),
-        body_extra=(
-            {
-                "agentproxy.messages": messages,
-                "agentproxy.tools": tools or [],
-                "agentproxy.options": options,
-            }
-            if is_trace_bodies_enabled()
-            else None
-        ),
-    )
+    trace_extra = _request_trace_extra(headers, body.get("metadata"))
     request_id = (
         headers.get("x-request-id", "")
         or str(trace_extra.get("agentproxy.request_id", ""))
@@ -574,10 +775,19 @@ async def _chat_completions(body: dict[str, Any], headers) -> Response:
     trace_ctx = _trace_context(
         model.name,
         model_name,
-        "chat",
+        request_kind,
         request_id,
         upstream_mode=model.upstream_mode,
         extra=trace_extra,
+    )
+    normalized_request = dict(capture_request_body if capture_request_body is not None else body)
+    if capture_request_body is None:
+        normalized_request["messages"] = messages
+    capture = ModelBodyCapture(
+        enabled=trace_ctx.trace_bodies,
+        request_id=request_id,
+        request_body=normalized_request,
+        expected_span_name="request.chat",
     )
     tracer = get_tracer()
     request_span = get_current_trace_span()
@@ -600,87 +810,141 @@ async def _chat_completions(body: dict[str, Any], headers) -> Response:
             request_span=request_span,
             lifecycle=lifecycle,
             started=started,
+            capture=capture,
         )
 
+    span_cm = tracer.start_as_current_span("request.chat") if tracer is not None else None
+    if span_cm is not None:
+        request_span = span_cm.__enter__()
     try:
-        if tracer is None:
-            log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
+        for key, value in trace_ctx.attrs().items():
+            if request_span is not None:
+                request_span.set_attribute(key, value)
+        _emit_capture_request(capture, request_span)
+        log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
+        try:
             result = await get_queue().submit(model, messages, tools, options, trace_ctx=trace_ctx)
-        else:
-            with tracer.start_as_current_span("request.chat") as span:
-                request_span = span
-                for key, value in trace_ctx.attrs().items():
-                    span.set_attribute(key, value)
-                log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
-                try:
-                    result = await get_queue().submit(
-                        model, messages, tools, options, trace_ctx=trace_ctx
-                    )
-                except asyncio.CancelledError:
-                    _mark_cancelled_span(span, "request.cancelled")
-                    raise
-                span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
-                span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-                span.set_attribute(
-                    "response.finish_reasons", [result.done_reason] if result.done_reason else []
-                )
-    except asyncio.CancelledError:
-        _emit_request_terminal(lifecycle, "cancelled", started=started)
-        llm_requests_total.labels(logical_model=model.name, outcome="cancelled").inc()
-        _mark_cancelled_span(request_span, "request.cancelled")
-        log_on_span(
-            request_span,
-            "request.completed",
-            **trace_ctx.attrs(),
-            outcome="cancelled",
-        )
-        raise
-    except QueueBusy:
-        _emit_request_terminal(lifecycle, "queue_rejected", started=started)
-        llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
-        log_on_span(
-            request_span,
-            "request.completed",
-            "warning",
-            **trace_ctx.attrs(),
-            outcome="rejected",
-        )
-        return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
-    except ContextTruncated as exc:
-        _emit_request_terminal(lifecycle, "context_truncated", started=started)
-        # Opt-in hard fail (issue #33): the backend cut the context below the ask.
-        llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
-        log_on_span(
-            request_span,
-            "request.completed",
-            "warning",
-            **trace_ctx.attrs(),
-            outcome="context-truncated",
-            error=str(exc),
-        )
-        return _error(502, str(exc), "context_truncated")
-    except AllBackendsFailed as exc:
-        _emit_request_terminal(lifecycle, "upstream_failed", started=started)
-        llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
-        log_on_span(
-            request_span,
-            "request.completed",
-            "warning",
-            **trace_ctx.attrs(),
-            outcome="failed",
-            error=str(exc),
-        )
-        return _error(502, str(exc), "upstream_error")
+        except asyncio.CancelledError:
+            _emit_request_terminal(lifecycle, "cancelled", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="cancelled").inc()
+            _mark_cancelled_span(request_span, "request.cancelled")
+            _emit_capture_response(
+                capture,
+                request_span,
+                _capture_response_body(capture, {}, capture_response_transform),
+                status="incomplete",
+                reason="cancelled",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                **trace_ctx.attrs(),
+                outcome="cancelled",
+            )
+            raise
+        except QueueBusy:
+            error_body = _error_body("proxy queue is full, retry shortly", "rate_limit_error")
+            _emit_request_terminal(lifecycle, "queue_rejected", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                _capture_response_body(capture, error_body, capture_response_transform),
+                status="incomplete",
+                reason="queue_rejected",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="rejected",
+            )
+            return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
+        except ContextTruncated as exc:
+            error_body = _error_body(str(exc), "context_truncated")
+            _emit_request_terminal(lifecycle, "context_truncated", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                _capture_response_body(capture, error_body, capture_response_transform),
+                status="incomplete",
+                reason="context_truncated",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="context-truncated",
+                error=str(exc),
+            )
+            return _error(502, str(exc), "context_truncated")
+        except AllBackendsFailed as exc:
+            error_body = _error_body(str(exc), "upstream_error")
+            _emit_request_terminal(lifecycle, "upstream_failed", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                _capture_response_body(capture, error_body, capture_response_transform),
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="failed",
+                error=str(exc),
+            )
+            return _error(502, str(exc), "upstream_error")
+        except BodyCaptureError:
+            raise
+        except Exception:
+            _emit_capture_response(
+                capture,
+                request_span,
+                _capture_response_body(capture, {}, capture_response_transform),
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            raise
 
-    llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
-    _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
-    log_on_span(
-        request_span,
-        "request.completed",
-        **trace_ctx.attrs(),
-        outcome="ok",
-    )
-    return JSONResponse(content=_chat_completion_response(model.name, result))
+        try:
+            if request_span is not None:
+                upstream.set_result_span_attributes(request_span, result)
+            response_body = _chat_completion_response(model.name, result)
+            _emit_capture_response(
+                capture,
+                request_span,
+                _capture_response_body(capture, response_body, capture_response_transform),
+            )
+        except BodyCaptureError:
+            raise
+        except Exception:
+            _emit_capture_response(
+                capture,
+                request_span,
+                {},
+                status="incomplete",
+                reason="response_failed",
+            )
+            raise
+        llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+        _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
+        log_on_span(
+            request_span,
+            "request.completed",
+            **trace_ctx.attrs(),
+            outcome="ok",
+        )
+        return JSONResponse(content=response_body)
+    finally:
+        if span_cm is not None:
+            span_cm.__exit__(None, None, None)
 
 
 @mcp_server.tool(name="list_models")
@@ -688,6 +952,21 @@ async def mcp_list_models() -> dict[str, list[str]]:
     """List model names currently available through Agent Proxy."""
 
     return {"models": await list_tags()}
+
+
+def _mcp_prompt_response(payload: dict[str, Any]) -> dict[str, Any]:
+    if "error" in payload:
+        return payload
+    choice = payload["choices"][0]
+    message = choice["message"]
+    return {
+        "model": payload["model"],
+        "content": message.get("content"),
+        "reasoning_content": message.get("reasoning_content", ""),
+        "tool_calls": message.get("tool_calls", []),
+        "finish_reason": choice.get("finish_reason"),
+        "usage": payload.get("usage", {}),
+    }
 
 
 @mcp_server.tool(name="send_prompt")
@@ -704,35 +983,57 @@ async def mcp_send_prompt(
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
+    request_id = str(uuid.uuid4())
     body: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "metadata": {"ward.harness": "mcp"},
+        "metadata": {"request_id": request_id, "ward.harness": "mcp"},
     }
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
     if temperature is not None:
         body["temperature"] = temperature
 
-    response = await _chat_completions(body, {})
+    capture_request = {
+        "prompt": prompt,
+        "model": model,
+        "system_prompt": system_prompt,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    response = await _chat_completions(
+        body,
+        {},
+        request_kind="mcp_prompt",
+        capture_request_body=capture_request,
+        capture_response_transform=_mcp_prompt_response,
+    )
     payload = json.loads(bytes(response.body))
     if response.status_code >= 400:
         error = payload.get("error", {})
         raise ToolError(str(error.get("message", "Agent Proxy request failed")))
 
-    choice = payload["choices"][0]
-    message = choice["message"]
-    return {
-        "model": payload["model"],
-        "content": message.get("content"),
-        "reasoning_content": message.get("reasoning_content", ""),
-        "tool_calls": message.get("tool_calls", []),
-        "finish_reason": choice.get("finish_reason"),
-        "usage": payload.get("usage", {}),
-    }
+    return _mcp_prompt_response(payload)
 
 
 app.mount("/mcp", mcp_server.streamable_http_app())
+
+
+def _text_completion_response(model_name: str, result: upstream.UpstreamResult) -> dict[str, Any]:
+    return {
+        "id": f"cmpl-{uuid.uuid4().hex}",
+        "object": "text_completion",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": [
+            {"index": 0, "text": result.content or "", "finish_reason": _finish_reason(result)}
+        ],
+        "usage": {
+            "prompt_tokens": result.prompt_eval_count,
+            "completion_tokens": result.eval_count,
+            "total_tokens": result.prompt_eval_count + result.eval_count,
+        },
+    }
 
 
 @app.post("/v1/completions")
@@ -743,14 +1044,17 @@ async def completions(request: Request) -> Response:
         body = await request.json()
     except Exception:
         return _error(400, "invalid JSON body", "invalid_request_error")
+    if not isinstance(body, dict):
+        return _error(400, "JSON body must be an object", "invalid_request_error")
 
-    model_name = body.get("model")
+    requested_model = body.get("model")
+    model_name = requested_model if isinstance(requested_model, str) else ""
     try:
         model = await resolve(model_name) if model_name else None
     except RouteUnavailable as exc:
         return _error(503, str(exc), "model_unavailable")
     if model is None:
-        return _error(404, f"unknown model '{model_name}'", "model_not_found")
+        return _error(404, f"unknown model '{requested_model}'", "model_not_found")
     llm_route_requests_total.labels(
         logical_model=model.name,
         upstream_mode=model.upstream_mode,
@@ -767,15 +1071,7 @@ async def completions(request: Request) -> Response:
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
-    trace_extra = _request_trace_extra(
-        request.headers,
-        body.get("metadata"),
-        body_extra=(
-            {"agentproxy.prompt": prompt, "agentproxy.options": options}
-            if is_trace_bodies_enabled()
-            else None
-        ),
-    )
+    trace_extra = _request_trace_extra(request.headers, body.get("metadata"))
     request_id = (
         request.headers.get("x-request-id", "")
         or str(trace_extra.get("agentproxy.request_id", ""))
@@ -789,6 +1085,14 @@ async def completions(request: Request) -> Response:
         upstream_mode=model.upstream_mode,
         extra=trace_extra,
     )
+    normalized_request = dict(body)
+    normalized_request["prompt"] = prompt
+    capture = ModelBodyCapture(
+        enabled=trace_ctx.trace_bodies,
+        request_id=request_id,
+        request_body=normalized_request,
+        expected_span_name="request.completions",
+    )
     tracer = get_tracer()
     request_span = get_current_trace_span()
     lifecycle = RequestLifecycle.from_trace_context(
@@ -798,100 +1102,134 @@ async def completions(request: Request) -> Response:
     started = time.perf_counter()
     _emit_trajectory_event(lifecycle.action_event())
 
+    span_cm = tracer.start_as_current_span("request.completions") if tracer is not None else None
+    if span_cm is not None:
+        request_span = span_cm.__enter__()
     try:
-        if tracer is None:
-            log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
+        for key, value in trace_ctx.attrs().items():
+            if request_span is not None:
+                request_span.set_attribute(key, value)
+        _emit_capture_request(capture, request_span)
+        log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
+        try:
             result = await get_queue().submit(model, messages, None, options, trace_ctx=trace_ctx)
-        else:
-            with tracer.start_as_current_span("request.completions") as span:
-                request_span = span
-                for key, value in trace_ctx.attrs().items():
-                    span.set_attribute(key, value)
-                log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
-                try:
-                    result = await get_queue().submit(
-                        model, messages, None, options, trace_ctx=trace_ctx
-                    )
-                except asyncio.CancelledError:
-                    _mark_cancelled_span(span, "request.cancelled")
-                    raise
-                span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
-                span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-                span.set_attribute(
-                    "response.finish_reasons", [result.done_reason] if result.done_reason else []
-                )
-    except asyncio.CancelledError:
-        _emit_request_terminal(lifecycle, "cancelled", started=started)
-        llm_requests_total.labels(logical_model=model.name, outcome="cancelled").inc()
-        _mark_cancelled_span(request_span, "request.cancelled")
-        log_on_span(
-            request_span,
-            "request.completed",
-            **trace_ctx.attrs(),
-            outcome="cancelled",
-        )
-        raise
-    except QueueBusy:
-        _emit_request_terminal(lifecycle, "queue_rejected", started=started)
-        llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
-        log_on_span(
-            request_span,
-            "request.completed",
-            "warning",
-            **trace_ctx.attrs(),
-            outcome="rejected",
-        )
-        return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
-    except ContextTruncated as exc:
-        _emit_request_terminal(lifecycle, "context_truncated", started=started)
-        # Opt-in hard fail (issue #33): the backend cut the context below the ask.
-        llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
-        log_on_span(
-            request_span,
-            "request.completed",
-            "warning",
-            **trace_ctx.attrs(),
-            outcome="context-truncated",
-            error=str(exc),
-        )
-        return _error(502, str(exc), "context_truncated")
-    except AllBackendsFailed as exc:
-        _emit_request_terminal(lifecycle, "upstream_failed", started=started)
-        llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
-        log_on_span(
-            request_span,
-            "request.completed",
-            "warning",
-            **trace_ctx.attrs(),
-            outcome="failed",
-            error=str(exc),
-        )
-        return _error(502, str(exc), "upstream_error")
+        except asyncio.CancelledError:
+            _emit_request_terminal(lifecycle, "cancelled", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="cancelled").inc()
+            _mark_cancelled_span(request_span, "request.cancelled")
+            _emit_capture_response(
+                capture,
+                request_span,
+                {},
+                status="incomplete",
+                reason="cancelled",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                **trace_ctx.attrs(),
+                outcome="cancelled",
+            )
+            raise
+        except QueueBusy:
+            error_body = _error_body("proxy queue is full, retry shortly", "rate_limit_error")
+            _emit_request_terminal(lifecycle, "queue_rejected", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="rejected").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                error_body,
+                status="incomplete",
+                reason="queue_rejected",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="rejected",
+            )
+            return _error(429, "proxy queue is full, retry shortly", "rate_limit_error")
+        except ContextTruncated as exc:
+            error_body = _error_body(str(exc), "context_truncated")
+            _emit_request_terminal(lifecycle, "context_truncated", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="context_truncated").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                error_body,
+                status="incomplete",
+                reason="context_truncated",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="context-truncated",
+                error=str(exc),
+            )
+            return _error(502, str(exc), "context_truncated")
+        except AllBackendsFailed as exc:
+            error_body = _error_body(str(exc), "upstream_error")
+            _emit_request_terminal(lifecycle, "upstream_failed", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                error_body,
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="failed",
+                error=str(exc),
+            )
+            return _error(502, str(exc), "upstream_error")
+        except BodyCaptureError:
+            raise
+        except Exception:
+            _emit_capture_response(
+                capture,
+                request_span,
+                {},
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            raise
 
-    llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
-    _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
-    log_on_span(
-        request_span,
-        "request.completed",
-        **trace_ctx.attrs(),
-        outcome="ok",
-    )
-    return JSONResponse(
-        content={
-            "id": f"cmpl-{uuid.uuid4().hex}",
-            "object": "text_completion",
-            "created": int(time.time()),
-            "model": model.name,
-            "choices": [
-                {"index": 0, "text": result.content or "", "finish_reason": _finish_reason(result)}
-            ],
-            "usage": {
-                "prompt_tokens": result.prompt_eval_count,
-                "completion_tokens": result.eval_count,
-                "total_tokens": result.prompt_eval_count + result.eval_count,
-            },
-        }
-    )
+        try:
+            if request_span is not None:
+                upstream.set_result_span_attributes(request_span, result)
+            response_body = _text_completion_response(model.name, result)
+            _emit_capture_response(capture, request_span, response_body)
+        except BodyCaptureError:
+            raise
+        except Exception:
+            _emit_capture_response(
+                capture,
+                request_span,
+                {},
+                status="incomplete",
+                reason="response_failed",
+            )
+            raise
+        llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+        _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
+        log_on_span(
+            request_span,
+            "request.completed",
+            **trace_ctx.attrs(),
+            outcome="ok",
+        )
+        return JSONResponse(content=response_body)
+    finally:
+        if span_cm is not None:
+            span_cm.__exit__(None, None, None)
 
 
 # --------------------------------------------------------------------------- #
