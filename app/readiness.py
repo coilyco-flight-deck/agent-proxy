@@ -120,10 +120,11 @@ async def check_route_readiness(logical_route: str) -> RouteReadiness:
         (settings.route_upstream_mode == "litellm" and primary.dialect == "openai")
         or (settings.route_upstream_mode == "direct" and primary.dialect == "ollama")
     )
+    targets_are_supported = all(target.runtime == "ollama" for target in targets)
     mapping_ok = (
-        bool(targets)
-        and all(target.runtime == "ollama" for target in targets)
-        and mode_matches_backend
+        mode_matches_backend
+        and targets_are_supported
+        and (settings.route_upstream_mode == "litellm" or bool(targets))
     )
     _observe("route_mapping", mapping_ok, time.perf_counter())
     if not mapping_ok:
@@ -132,6 +133,7 @@ async def check_route_readiness(logical_route: str) -> RouteReadiness:
 
     assert primary is not None
     checks: list[Awaitable[tuple[str, bool]]] = []
+    ollama_url: str | None = None
 
     if settings.route_upstream_mode == "litellm":
         auth: upstream.RequestAuthKwargs = {}
@@ -155,19 +157,22 @@ async def check_route_readiness(logical_route: str) -> RouteReadiness:
                     ),
                 )
             )
-        ollama_url = settings.resolved_tower_base_url().rstrip("/")
+        if targets:
+            ollama_url = settings.resolved_tower_base_url().rstrip("/")
     else:
         ollama_url = primary.url
 
-    checks.extend(
-        (
-            _run("ollama_version", lambda: _status_ok(f"{ollama_url}/api/version")),
-            _run(
-                "ollama_catalog",
-                lambda: _ollama_catalog_contains(ollama_url, targets),
-            ),
+    if targets:
+        assert ollama_url is not None
+        checks.extend(
+            (
+                _run("ollama_version", lambda: _status_ok(f"{ollama_url}/api/version")),
+                _run(
+                    "ollama_catalog",
+                    lambda: _ollama_catalog_contains(ollama_url, targets),
+                ),
+            )
         )
-    )
 
     with suppress_health_observability():
         results = await asyncio.gather(*checks)

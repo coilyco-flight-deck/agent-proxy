@@ -49,9 +49,10 @@ Status legend:
 - **Runtime and delivery checks** - landed - SSM-backed configuration, local
   `/healthz`, metrics-only non-generating route readiness, `/metrics`,
   daemonless boot probing, container probing, and a reliability harness. Route
-  readiness verifies configured LiteLLM and Ollama control surfaces without
-  claiming that GPU execution or completion validity was proven. See
-  [readiness.md](readiness.md).
+  readiness verifies authenticated LiteLLM control surfaces for hosted routes
+  and adds Ollama catalog checks only when the registry declares local physical
+  targets. It does not claim that GPU execution or completion validity was
+  proven. See [readiness.md](readiness.md).
 
 ## Planned architecture v2
 

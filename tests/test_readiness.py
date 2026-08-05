@@ -106,6 +106,48 @@ async def test_litellm_route_readiness_uses_only_get_catalog_calls(monkeypatch, 
     )
 
 
+async def test_litellm_only_route_skips_ollama_checks(monkeypatch, tmp_path):
+    _configure_litellm(monkeypatch, tmp_path)
+    route = _route()
+    monkeypatch.setattr(readiness, "get_route_registry", lambda: _registry(route))
+    client = _GetOnlyClient(
+        {
+            "http://litellm:4000/health/readiness": _Response({"status": "healthy"}),
+            "http://litellm:4000/v1/models": _Response(
+                {"data": [{"id": "community/conversation-management"}]}
+            ),
+        }
+    )
+    monkeypatch.setattr(upstream, "get_client", lambda: client)
+
+    result = await readiness.check_route_readiness(route.key)
+
+    assert result.ready is True
+    assert result.failed_checks == ()
+    assert {url for url, _kwargs in client.requests} == set(client.responses)
+    assert all("ollama" not in url for url, _kwargs in client.requests)
+
+
+async def test_litellm_only_route_fails_closed_in_direct_mode(monkeypatch):
+    settings = readiness.get_settings()
+    monkeypatch.setattr(settings, "route_upstream_mode", "direct")
+    monkeypatch.setattr(
+        settings,
+        "backends_json",
+        json.dumps([{"name": "tower", "url": "http://ollama:11434", "dialect": "ollama"}]),
+    )
+    route = _route()
+    monkeypatch.setattr(readiness, "get_route_registry", lambda: _registry(route))
+    client = _GetOnlyClient({})
+    monkeypatch.setattr(upstream, "get_client", lambda: client)
+
+    result = await readiness.check_route_readiness(route.key)
+
+    assert result.ready is False
+    assert result.failed_checks == ("route_mapping",)
+    assert client.requests == []
+
+
 async def test_missing_fallback_model_marks_route_not_ready(monkeypatch, tmp_path):
     _configure_litellm(monkeypatch, tmp_path)
     route = _route(

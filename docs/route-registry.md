@@ -58,8 +58,10 @@ model.
 fallback targets rendered by Deploy from the same source that renders LiteLLM
 routing. Agent Proxy uses the list only for non-generating installed-model
 checks. If it is absent, readiness checks the existing `direct` target for
-backward compatibility. Physical target names never enter readiness responses,
-logs, traces, or metric labels.
+backward compatibility. When both fields are absent, LiteLLM mode treats the
+route as hosted-provider-only and verifies only the authenticated LiteLLM
+control surfaces. Direct mode fails closed. Physical target names never enter
+readiness responses, logs, traces, or metric labels.
 
 The loader rejects unknown formats or fields, duplicate keys, missing aliases,
 malformed targets, unsafe file types, oversized files, and invalid JSON.

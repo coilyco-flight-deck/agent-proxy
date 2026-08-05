@@ -24,7 +24,14 @@ surfaces concurrently:
 * Ollama `GET /api/version` succeeds.
 * Ollama `GET /api/tags` contains every configured primary and fallback target.
 
+For a LiteLLM-only hosted-provider route whose registry has no physical direct
+or readiness target, Agent Proxy checks the route registry, LiteLLM
+authentication, LiteLLM readiness, and the logical alias in the LiteLLM model
+catalog. It skips Ollama checks because an unrelated local backend cannot prove
+that the hosted route is available. The same route fails closed in direct mode.
+
 Direct rollback mode skips LiteLLM and checks the configured Ollama backend.
+It requires a supported physical direct target.
 The readiness path never calls chat, completions, generation, or embeddings.
 `PROXY_READINESS_TIMEOUT` bounds each dependency call and defaults to 3 seconds.
 
