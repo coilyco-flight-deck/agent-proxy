@@ -1,0 +1,66 @@
+{
+  "format": "agent-proxy-route-registry/v1",
+  "routes": [
+    {
+      "direct": {
+        "model": "ornith:35b",
+        "runtime": "ollama"
+      },
+      "key": "sirens-echo/default",
+      "readiness_targets": [
+        {
+          "model": "ornith:35b",
+          "runtime": "ollama"
+        },
+        {
+          "model": "ornith:9b",
+          "runtime": "ollama"
+        }
+      ],
+      "upstream_alias": "sirens-echo/default"
+    },
+    {
+      "direct": {
+        "model": "ornith:35b",
+        "runtime": "ollama"
+      },
+      "key": "community/conversation-management",
+      "readiness_targets": [
+        {
+          "model": "ornith:35b",
+          "runtime": "ollama"
+        },
+        {
+          "model": "ornith:9b",
+          "runtime": "ollama"
+        }
+      ],
+      "upstream_alias": "community/conversation-management"
+    },
+    {
+      "direct": null,
+      "key": "evaluation/deepseek-v4-flash",
+      "upstream_alias": "evaluation/deepseek-v4-flash"
+    },
+    {
+      "direct": {
+        "model": "ornith:35b",
+        "runtime": "ollama"
+      },
+      "key": "evaluation/ornith-35b",
+      "readiness_targets": [
+        {
+          "model": "ornith:35b",
+          "runtime": "ollama"
+        }
+      ],
+      "upstream_alias": "evaluation/ornith-35b"
+    }
+  ],
+  "source": {
+    "evaluation_routes_sha256": "d096681f1ebc77181e6911e81aa3a1491c02fc6d44ea77172dd323a9397b4b00",
+    "format": "deploy.agent-proxy-routes/v1",
+    "service_routes_sha256": "11653aec99727c0d6514fd6f460a9645f71273b06407b17757d43dfdb2fd0309",
+    "version": 1
+  }
+}

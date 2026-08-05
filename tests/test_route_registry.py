@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from app import route_registry
+
+DEPLOY_V1_FIXTURE = Path(__file__).parent / "fixtures" / "route_registry" / "deploy-v1.json"
 
 
 def _payload() -> dict[str, object]:
     return {
         "format": "agent-proxy-route-registry/v1",
         "source": {
-            "format": "aosh.agent-proxy-routes",
+            "evaluation_routes_sha256": "1" * 64,
+            "format": "deploy.agent-proxy-routes/v1",
+            "service_routes_sha256": "2" * 64,
             "version": 1,
-            "revision": "source-revision",
-            "sha256": "source-digest",
         },
         "routes": [
             {
@@ -62,7 +65,41 @@ def test_valid_registry_loads_logical_routes(tmp_path):
         route_registry.DirectTarget("ornith:35b", "ollama"),
         route_registry.DirectTarget("ornith:9b", "ollama"),
     )
-    assert registry.source["format"] == "aosh.agent-proxy-routes"
+    assert registry.source == {
+        "evaluation_routes_sha256": "1" * 64,
+        "format": "deploy.agent-proxy-routes/v1",
+        "service_routes_sha256": "2" * 64,
+        "version": 1,
+    }
+
+
+def test_deploy_9b35fee_registry_fixture_loads():
+    registry = route_registry.load_route_registry(DEPLOY_V1_FIXTURE)
+
+    assert registry.listed_keys() == [
+        "community/conversation-management",
+        "evaluation/deepseek-v4-flash",
+        "evaluation/ornith-35b",
+        "sirens-echo/default",
+    ]
+    assert registry.source == {
+        "evaluation_routes_sha256": (
+            "d096681f1ebc77181e6911e81aa3a1491c02fc6d44ea77172dd323a9397b4b00"
+        ),
+        "format": "deploy.agent-proxy-routes/v1",
+        "service_routes_sha256": (
+            "11653aec99727c0d6514fd6f460a9645f71273b06407b17757d43dfdb2fd0309"
+        ),
+        "version": 1,
+    }
+
+
+def test_unknown_source_field_is_rejected(tmp_path):
+    payload = _payload()
+    payload["source"]["unexpected"] = "value"
+
+    with pytest.raises(route_registry.RouteRegistryError, match="unsupported fields: unexpected"):
+        route_registry.load_route_registry(_write(tmp_path, payload))
 
 
 def test_unknown_format_is_rejected(tmp_path):

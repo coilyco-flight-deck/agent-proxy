@@ -22,10 +22,10 @@ registry.
 {
   "format": "agent-proxy-route-registry/v1",
   "source": {
-    "format": "deploy.agent-proxy-routes",
-    "version": 1,
-    "revision": "source-revision",
-    "sha256": "source-digest"
+    "evaluation_routes_sha256": "evaluation-input-digest",
+    "format": "deploy.agent-proxy-routes/v1",
+    "service_routes_sha256": "service-input-digest",
+    "version": 1
   },
   "routes": [
     {
@@ -49,6 +49,10 @@ registry.
   ]
 }
 ```
+
+The source object records the exact Deploy-owned service and evaluation inputs
+used to generate the mounted registry. Agent Proxy retains both SHA-256 digests
+as provenance while continuing to reject unrecognized source fields.
 
 `upstream_alias` is sent to LiteLLM. `direct` is optional deployment data for
 the established rollback path. Direct mode currently supports Ollama targets.
