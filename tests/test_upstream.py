@@ -242,12 +242,12 @@ async def test_logical_route_metadata_never_enters_message_content(monkeypatch):
     backend = Backend(
         name="litellm",
         url="http://litellm:4000",
-        ollama_tag="community/knowledge-retrieval",
+        ollama_tag="sirens-echo/default",
         dialect="openai",
     )
     fake = _CapturingClient(
         {
-            "model": "community/knowledge-retrieval",
+            "model": "sirens-echo/default",
             "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
         }
     )
@@ -259,7 +259,7 @@ async def test_logical_route_metadata_never_enters_message_content(monkeypatch):
         num_ctx=40960,
         messages=messages,
         span_attrs={
-            "agentproxy.logical_model": "community/knowledge-retrieval",
+            "agentproxy.logical_model": "sirens-echo/default",
             "agentproxy.upstream_mode": "litellm",
             "ward.role": "community",
         },
@@ -267,7 +267,7 @@ async def test_logical_route_metadata_never_enters_message_content(monkeypatch):
 
     assert fake.last_body["messages"] == messages
     assert fake.last_body["metadata"] == {
-        "agentproxy.logical_model": "community/knowledge-retrieval",
+        "agentproxy.logical_model": "sirens-echo/default",
         "agentproxy.upstream_mode": "litellm",
         "ward.role": "community",
     }

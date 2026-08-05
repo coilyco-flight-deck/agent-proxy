@@ -35,8 +35,8 @@ class _GetOnlyClient:
 
 def _route(*targets: DirectTarget) -> Route:
     return Route(
-        key="community/conversation-management",
-        upstream_alias="community/conversation-management",
+        key="sirens-echo/default",
+        upstream_alias="sirens-echo/default",
         direct=targets[0] if targets else None,
         readiness_targets=targets,
     )
@@ -78,9 +78,7 @@ async def test_litellm_route_readiness_uses_only_get_catalog_calls(monkeypatch, 
     client = _GetOnlyClient(
         {
             "http://litellm:4000/health/readiness": _Response({"status": "healthy"}),
-            "http://litellm:4000/v1/models": _Response(
-                {"data": [{"id": "community/conversation-management"}]}
-            ),
+            "http://litellm:4000/v1/models": _Response({"data": [{"id": "sirens-echo/default"}]}),
             "http://ollama:11434/api/version": _Response({"version": "test"}),
             "http://ollama:11434/api/tags": _Response(
                 {"models": [{"name": "ornith:35b"}, {"name": "ornith:9b"}]}
@@ -113,9 +111,7 @@ async def test_litellm_only_route_skips_ollama_checks(monkeypatch, tmp_path):
     client = _GetOnlyClient(
         {
             "http://litellm:4000/health/readiness": _Response({"status": "healthy"}),
-            "http://litellm:4000/v1/models": _Response(
-                {"data": [{"id": "community/conversation-management"}]}
-            ),
+            "http://litellm:4000/v1/models": _Response({"data": [{"id": "sirens-echo/default"}]}),
         }
     )
     monkeypatch.setattr(upstream, "get_client", lambda: client)
@@ -158,9 +154,7 @@ async def test_missing_fallback_model_marks_route_not_ready(monkeypatch, tmp_pat
     client = _GetOnlyClient(
         {
             "http://litellm:4000/health/readiness": _Response({}),
-            "http://litellm:4000/v1/models": _Response(
-                {"data": [{"id": "community/conversation-management"}]}
-            ),
+            "http://litellm:4000/v1/models": _Response({"data": [{"id": "sirens-echo/default"}]}),
             "http://ollama:11434/api/version": _Response({}),
             "http://ollama:11434/api/tags": _Response({"models": [{"name": "ornith:35b"}]}),
         }
@@ -216,7 +210,7 @@ async def test_missing_registry_fails_without_dependency_requests(monkeypatch):
     client = _GetOnlyClient({})
     monkeypatch.setattr(upstream, "get_client", lambda: client)
 
-    result = await readiness.check_route_readiness("community/conversation-management")
+    result = await readiness.check_route_readiness("sirens-echo/default")
 
     assert result.ready is False
     assert result.failed_checks == ("route_registry",)

@@ -6,7 +6,7 @@ of successful inference. Each signal answers a different operational question.
 * **Service up** uses `GET /healthz`. It proves only that Agent Proxy can serve
   requests. It remains local so a downstream outage does not restart a healthy
   Agent Proxy process.
-* **Route ready** uses `GET /readyz/{role}/{intent}`. It checks configuration,
+* **Route ready** uses `GET /readyz/{namespace}/{alias}`. It checks configuration,
   authentication, catalogs, and provider availability without model inference.
 * **Inference recently verified** comes from passive production request metrics
   or a deliberately sparse canary. It is the only signal that proves model

@@ -84,7 +84,7 @@ async def test_disconnect_cancels_upstream_and_releases_capacity(monkeypatch, ca
     monkeypatch.setattr(resilience, "breakers", resilience.CircuitBreakerRegistry())
 
     model = LogicalModel(
-        name="community/conversation-management",
+        name="sirens-echo/default",
         num_ctx=4096,
         backends=[
             Backend(
@@ -201,7 +201,7 @@ async def test_disconnect_cancels_upstream_and_releases_capacity(monkeypatch, ca
 
 async def test_enabled_capture_records_cancelled_response_as_incomplete(monkeypatch, capsys):
     model = LogicalModel(
-        name="community/conversation-management",
+        name="sirens-echo/default",
         num_ctx=4096,
         backends=[],
         upstream_mode="litellm",

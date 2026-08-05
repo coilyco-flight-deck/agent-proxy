@@ -14,9 +14,9 @@ Status legend:
   exposes model discovery and non-streaming prompt tools through the existing
   Agent Proxy policy, reliability, telemetry, and trajectory path. See
   [mcp.md](mcp.md).
-- **Logical route registry** - landed - strict Deploy-mounted logical lanes hide
-  physical backends from governed clients, route aliases through LiteLLM, and
-  fail closed when direct rollback cannot serve a runtime. See
+- **Logical route registry** - landed - strict Deploy-mounted service and
+  evaluation aliases hide physical backends from governed clients, route
+  aliases through LiteLLM, and fail closed when direct rollback cannot serve a runtime. See
   [route-registry.md](route-registry.md).
 - **Backend-derived context safety** - landed - safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
 - **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.

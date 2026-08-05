@@ -186,8 +186,8 @@ async def test_litellm_catalog_intersects_key_models_with_tower_context(monkeypa
 
 def _logical_registry(runtime: str = "ollama") -> RouteRegistry:
     route = Route(
-        key="community/knowledge-retrieval",
-        upstream_alias="community/knowledge-retrieval",
+        key="sirens-echo/default",
+        upstream_alias="sirens-echo/default",
         direct=DirectTarget("ornith:35b", runtime),
     )
     return RouteRegistry(routes={route.key: route}, source={})
@@ -216,10 +216,10 @@ async def test_logical_route_reaches_litellm_alias(monkeypatch):
 
     monkeypatch.setattr(models, "_ollama_catalog", fake_tower_catalog)
 
-    model = await models.resolve("community/knowledge-retrieval")
+    model = await models.resolve("sirens-echo/default")
 
-    assert model.name == "community/knowledge-retrieval"
-    assert model.primary.ollama_tag == "community/knowledge-retrieval"
+    assert model.name == "sirens-echo/default"
+    assert model.primary.ollama_tag == "sirens-echo/default"
     assert model.upstream_mode == "litellm"
     assert model.num_ctx == 48128
 
@@ -235,9 +235,9 @@ async def test_logical_route_resolves_supported_direct_target(monkeypatch):
 
     monkeypatch.setattr(models, "_ollama_catalog", fake_tower_catalog)
 
-    model = await models.resolve("community/knowledge-retrieval")
+    model = await models.resolve("sirens-echo/default")
 
-    assert model.name == "community/knowledge-retrieval"
+    assert model.name == "sirens-echo/default"
     assert model.primary.ollama_tag == "ornith:35b"
     assert model.upstream_mode == "direct"
 
@@ -253,7 +253,7 @@ async def test_logical_route_rejects_unsupported_direct_runtime(monkeypatch):
     )
 
     with pytest.raises(models.RouteUnavailable, match="no supported direct target"):
-        await models.resolve("community/knowledge-retrieval")
+        await models.resolve("sirens-echo/default")
 
 
 # --- the invariant: the caller can never override num_ctx ------------------- #

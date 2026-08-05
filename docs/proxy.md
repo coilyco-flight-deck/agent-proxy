@@ -8,8 +8,8 @@ here - see the source-of-truth pointers in the README.
 
 ## Request path
 
-A governed harness sends an OpenAI-shaped request carrying a logical
-`<role>/<intent>` key as `model`. The proxy:
+A governed client sends an OpenAI-shaped request carrying a Deploy-owned
+`<namespace>/<alias>` key as `model`. The proxy:
 
 1. **resolves** the key against Deploy's mounted registry (`app/models.py`).
    LiteLLM mode sends the configured alias. Direct rollback sends a supported
@@ -159,7 +159,7 @@ and traces.
   resilience path.
 * `GET /v1/models` - lists enabled logical route keys and hides physical models.
 * `GET /healthz` - liveness for Caddy / k8s probes.
-* `GET /readyz/{role}/{intent}` - non-generating structural readiness for one
+* `GET /readyz/{namespace}/{alias}` - non-generating structural readiness for one
   governed logical route. See [readiness.md](readiness.md).
 * `GET /metrics` - prometheus exposition.
 

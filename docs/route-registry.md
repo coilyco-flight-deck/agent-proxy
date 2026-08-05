@@ -1,19 +1,20 @@
 # Logical route registry
 
-Agent Proxy accepts stable `<role>/<intent>` keys from governed clients. Deploy
-mounts a service-local JSON registry that resolves each key without exposing a
-physical backend through `/v1/models`, MCP discovery, responses, or public
-telemetry.
+Agent Proxy accepts stable `<namespace>/<alias>` keys from governed clients.
+Deploy mounts a service-local JSON registry that resolves each key without
+exposing a physical backend through `/v1/models`, MCP discovery, responses, or
+public telemetry. Namespaces identify owning services or evaluation surfaces,
+not Agent Compose roles.
 
 ## Ownership
 
-* AOSH scores the primary and fallback backend choices.
-* Deploy renders AOSH's versioned source into this service-specific schema.
+* Deploy owns service and evaluation aliases plus their selected backends.
 * Agent Proxy validates keys, applies context policy, and dispatches an alias.
 * LiteLLM translates the alias into provider routing, retry, and fallback.
 
-Agent Proxy never imports or fetches AOSH. Endpoints, secret paths, and
-resources stay in Deploy-owned backend configuration, outside this registry.
+Agent Proxy never imports or fetches a route source. Endpoints, secret paths,
+and resources stay in Deploy-owned backend configuration, outside this
+registry.
 
 ## Version 1
 
@@ -21,15 +22,15 @@ resources stay in Deploy-owned backend configuration, outside this registry.
 {
   "format": "agent-proxy-route-registry/v1",
   "source": {
-    "format": "aosh.agent-proxy-routes",
+    "format": "deploy.agent-proxy-routes",
     "version": 1,
     "revision": "source-revision",
     "sha256": "source-digest"
   },
   "routes": [
     {
-      "key": "community/knowledge-retrieval",
-      "upstream_alias": "community/knowledge-retrieval",
+      "key": "sirens-echo/default",
+      "upstream_alias": "sirens-echo/default",
       "direct": {
         "model": "ornith:35b",
         "runtime": "ollama"
@@ -55,8 +56,8 @@ A known llama.cpp target fails closed instead of silently selecting another
 model.
 
 `readiness_targets` is an optional ordered list of physical primary and
-fallback targets rendered by Deploy from the same source that renders LiteLLM
-routing. Agent Proxy uses the list only for non-generating installed-model
+fallback targets rendered by Deploy from the same route inputs that render
+LiteLLM routing. Agent Proxy uses the list only for non-generating installed-model
 checks. If it is absent, readiness checks the existing `direct` target for
 backward compatibility. When both fields are absent, LiteLLM mode treats the
 route as hosted-provider-only and verifies only the authenticated LiteLLM
@@ -77,6 +78,6 @@ Configured invalid files stop process startup before traffic is served.
   discovery only when no registry path is set. Production sets it to `false`.
 
 Logical key and upstream mode are trace, log, and metric dimensions. Physical
-identity remains restricted backend telemetry. Neither logical route nor role
-is appended to messages or prompts. Body-safe LiteLLM metadata remains outside
+identity remains restricted backend telemetry. Logical routes are not appended
+to messages or prompts. Body-safe LiteLLM metadata remains outside
 model-visible context.
