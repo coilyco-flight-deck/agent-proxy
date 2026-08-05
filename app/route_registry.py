@@ -79,7 +79,18 @@ def _source(value: Any) -> dict[str, str | int]:
         return {}
     if not isinstance(value, dict):
         raise RouteRegistryError("source must be an object")
-    _keys(value, {"format", "version", "revision", "sha256"}, "source")
+    _keys(
+        value,
+        {
+            "evaluation_routes_sha256",
+            "format",
+            "revision",
+            "service_routes_sha256",
+            "sha256",
+            "version",
+        },
+        "source",
+    )
     parsed: dict[str, str | int] = {}
     for key, item in value.items():
         if key == "version":
