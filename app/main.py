@@ -2,10 +2,9 @@
 FastAPI entrypoint: the OpenAI-compatible surface plus health and metrics
 (leg 02 "web server", leg 04 steps 1 and 6).
 
-Every harness points here unchanged. Governed requests carry a logical
-``<role>/<intent>`` route. The proxy validates it against Deploy's mounted
-registry, derives a safe context, and dispatches without adding route metadata
-to model-visible messages.
+Clients send a Deploy-owned logical ``<namespace>/<alias>`` route. The proxy
+validates it against the mounted registry, derives a safe context, and
+dispatches without adding route metadata to model-visible messages.
 """
 
 from __future__ import annotations
@@ -161,9 +160,9 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/readyz/{role}/{intent}")
-async def readyz(role: str, intent: str) -> JSONResponse:
-    logical_route = f"{role}/{intent}"
+@app.get("/readyz/{namespace}/{alias}")
+async def readyz(namespace: str, alias: str) -> JSONResponse:
+    logical_route = f"{namespace}/{alias}"
     try:
         result = await check_route_readiness(logical_route)
     except UnknownRoute:

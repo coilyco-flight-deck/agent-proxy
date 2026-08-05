@@ -72,7 +72,7 @@ viewing flow are defined in
 
 ## Current request path
 
-1. A harness sends a logical `<role>/<intent>` key and Ward correlation metadata.
+1. A client sends a Deploy-owned logical `<namespace>/<alias>` key and Ward correlation metadata.
 2. Agent Proxy validates the route, applies context safety and cheap structural checks, and emits operational evidence.
 3. The current reliability gateway queues and dispatches through the configured inner gateway. Deployments can select direct tower access or authenticated standalone LiteLLM.
 4. Agent Proxy returns the normalized response and emits bounded request evidence.

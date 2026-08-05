@@ -104,12 +104,12 @@ def test_route_readiness_endpoint(client, monkeypatch):
 
     monkeypatch.setattr("app.main.check_route_readiness", ready)
 
-    response = client.get("/readyz/community/conversation-management")
+    response = client.get("/readyz/sirens-echo/default")
 
     assert response.status_code == 200
     assert response.json() == {
         "status": "ready",
-        "route": "community/conversation-management",
+        "route": "sirens-echo/default",
     }
 
 
@@ -123,12 +123,12 @@ def test_route_readiness_failure_is_minimal(client, monkeypatch):
 
     monkeypatch.setattr("app.main.check_route_readiness", not_ready)
 
-    response = client.get("/readyz/community/conversation-management")
+    response = client.get("/readyz/sirens-echo/default")
 
     assert response.status_code == 503
     assert response.json() == {
         "status": "not_ready",
-        "route": "community/conversation-management",
+        "route": "sirens-echo/default",
         "failed_checks": ["litellm_catalog", "ollama_catalog"],
     }
     assert "ornith" not in response.text
@@ -161,10 +161,10 @@ def test_health_routes_emit_no_server_spans_or_trajectory_events(client, monkeyp
     exporter.clear()
 
     assert client.get("/healthz").status_code == 200
-    assert client.get("/readyz/community/conversation-management").status_code == 200
+    assert client.get("/readyz/sirens-echo/default").status_code == 200
     assert client.get("/metrics").status_code == 200
 
-    health_routes = {"/healthz", "/readyz/{role}/{intent}", "/metrics"}
+    health_routes = {"/healthz", "/readyz/{namespace}/{alias}", "/metrics"}
     assert not any(
         span.kind is SpanKind.SERVER and span.attributes.get("http.route") in health_routes
         for span in exporter.get_finished_spans()
@@ -188,8 +188,8 @@ def test_list_models(client):
 
 def _registry(runtime: str = "ollama") -> RouteRegistry:
     route = Route(
-        key="community/knowledge-retrieval",
-        upstream_alias="community/knowledge-retrieval",
+        key="sirens-echo/default",
+        upstream_alias="sirens-echo/default",
         direct=DirectTarget("ornith:35b", runtime),
     )
     return RouteRegistry(routes={route.key: route}, source={})
@@ -201,7 +201,7 @@ def test_logical_catalog_hides_physical_models(client, monkeypatch):
     data = client.get("/v1/models").json()
     ids = {model["id"] for model in data["data"]}
 
-    assert ids == {"community/knowledge-retrieval"}
+    assert ids == {"sirens-echo/default"}
     assert "ornith:35b" not in ids
 
 
@@ -239,15 +239,15 @@ def test_logical_request_forwards_alias_without_mutating_messages(client, monkey
     response = client.post(
         "/v1/chat/completions",
         json={
-            "model": "community/knowledge-retrieval",
+            "model": "sirens-echo/default",
             "messages": [{"role": "user", "content": "retrieve this"}],
             "metadata": {"ward.role": "community"},
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["model"] == "community/knowledge-retrieval"
-    assert captured["model"] == "community/knowledge-retrieval"
+    assert response.json()["model"] == "sirens-echo/default"
+    assert captured["model"] == "sirens-echo/default"
     assert captured["messages"] == [{"role": "user", "content": "retrieve this"}]
     assert captured["span_attrs"]["agentproxy.upstream_mode"] == "litellm"
 
@@ -261,7 +261,7 @@ def test_unsupported_direct_route_fails_closed(client, monkeypatch):
     response = client.post(
         "/v1/chat/completions",
         json={
-            "model": "community/knowledge-retrieval",
+            "model": "sirens-echo/default",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )
@@ -286,8 +286,8 @@ def test_unknown_logical_route_is_not_found(client, monkeypatch):
 
 def test_disabled_logical_route_is_unavailable(client, monkeypatch):
     route = Route(
-        key="community/knowledge-retrieval",
-        upstream_alias="community/knowledge-retrieval",
+        key="sirens-echo/default",
+        upstream_alias="sirens-echo/default",
         direct=DirectTarget("ornith:35b", "ollama"),
         enabled=False,
     )
@@ -300,9 +300,7 @@ def test_disabled_logical_route_is_unavailable(client, monkeypatch):
     )
 
     assert response.status_code == 503
-    assert response.json()["error"]["message"] == (
-        "route 'community/knowledge-retrieval' is disabled"
-    )
+    assert response.json()["error"]["message"] == ("route 'sirens-echo/default' is disabled")
 
 
 def _mcp_post(client, method, params=None, request_id=1):

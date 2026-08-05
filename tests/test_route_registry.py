@@ -20,8 +20,8 @@ def _payload() -> dict[str, object]:
         },
         "routes": [
             {
-                "key": "community/knowledge-retrieval",
-                "upstream_alias": "community/knowledge-retrieval",
+                "key": "sirens-echo/default",
+                "upstream_alias": "sirens-echo/default",
                 "direct": {"model": "ornith:35b", "runtime": "ollama"},
                 "readiness_targets": [
                     {"model": "ornith:35b", "runtime": "ollama"},
@@ -54,8 +54,8 @@ def _reset_registry():
 def test_valid_registry_loads_logical_routes(tmp_path):
     registry = route_registry.load_route_registry(_write(tmp_path, _payload()))
 
-    assert registry.listed_keys() == ["community/knowledge-retrieval"]
-    route = registry.routes["community/knowledge-retrieval"]
+    assert registry.listed_keys() == ["sirens-echo/default"]
+    route = registry.routes["sirens-echo/default"]
     assert route.upstream_alias == route.key
     assert route.direct == route_registry.DirectTarget("ornith:35b", "ollama")
     assert route.readiness_targets == (
