@@ -89,8 +89,8 @@ bodies. The configured OTLP or SigNoz sink must be governed as restricted model
 content accordingly.
 
 The repository enforces this condition for non-streaming chat, reconstructed
-streaming chat, text completions, and MCP prompt calls. Deployment enablement,
-restricted sink handling, and live SigNoz verification remain tracked in
+streaming chat, text completions, and MCP prompt calls. The restricted ser8
+deployment opt-in and live SigNoz verification completed under
 [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 ### SigNoz content viewing contract
@@ -227,8 +227,8 @@ secret is committed. Key knobs:
   degrade to no-ops when unset.
 * `PROXY_TRACE_BODIES` - opt-in model I/O capture, defaulting to off. The
   repository implementation captures every request and response body field when
-  enabled and fails hard on capture loss. Deployment and live verification are
-  tracked in
+  enabled and fails hard on capture loss. The restricted ser8 deployment and
+  live verification completed under
   [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 * `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
   or a single `skill-usage.json` artifact. When set, the proxy ingests it at

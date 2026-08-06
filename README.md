@@ -30,13 +30,13 @@ metadata-only. When capture is enabled, Agent Proxy writes the complete bodies
 to its structured logs and trace attributes. Any receiving OTLP or SigNoz sink
 therefore requires the restricted controls appropriate for model content.
 
-The repository implementation now enforces this contract for non-streaming
-chat, reconstructed streaming chat, text completions, and MCP prompt calls.
-Enabled capture fails hard instead of returning success after field loss or an
-omitted response. Deployment enablement and live SigNoz verification remain in
-[issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77),
-so the capability remains planned in the shipped feature inventory until Ops
-completes that proof. The stable log events, fields, pairing keys, and SigNoz
+The repository implementation enforces this contract for non-streaming chat,
+reconstructed streaming chat, text completions, and MCP prompt calls. Enabled
+capture fails hard instead of returning success after field loss or an omitted
+response. The restricted ser8 deployment opt-in and live SigNoz proof completed
+under
+[issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
+The stable log events, fields, pairing keys, and SigNoz
 viewing flow are defined in
 [`docs/proxy.md`](docs/proxy.md#signoz-content-viewing-contract).
 

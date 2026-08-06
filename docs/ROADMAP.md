@@ -47,7 +47,7 @@ This roadmap is an active work graph, not a ban on later capability work. The ow
 - [#52 Guard evidence](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/52) - landed - maps cli-guard audit rows and specgen policy snapshots without retaining sensitive arguments, diagnostics, paths, or hosts.
 - [#54 Ward skill-use evidence](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/54) - landed - persists normalized reap artifacts while preserving log and metric projections.
 - [#55 Request lifecycle evidence](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/55) - landed - adds opt-in bounded action and terminal execution emission without storage waits or body capture.
-- [#77 Opt-in full-I/O capture](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77) - planned - when body capture is enabled, captures every field in complete normalized request and response bodies without allowing selected-field or request-only degradation.
+- [#77 Opt-in full-I/O capture](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77) - landed - captures every field in complete normalized request and response bodies without allowing selected-field or request-only degradation, with the restricted ser8 deployment and live SigNoz proof complete.
 
 ## Delivery rules
 

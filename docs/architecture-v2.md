@@ -124,7 +124,7 @@ Evaluation is evidence collection and analysis. It does not authorize or execute
   model payloads. stdout, OTLP, and SigNoz remain metadata-only when capture is
   disabled. Body-bearing records require restricted handling when it is enabled.
 - Deletion, legal hold, retention expiry, and access-audit implementation details are future work. Producers must make these controls enforceable by avoiding implicit body copies.
-- Runtime enforcement of opt-in complete request and response capture remains tracked in
+- Runtime enforcement and the restricted ser8 deployment opt-in landed under
   [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
 
 ## Migration inventory
