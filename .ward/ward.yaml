@@ -86,6 +86,9 @@ commands:
     run: uv run python scripts/reliability_loop.py
     description: Reliability harness - score a context-growing, tool-using loop and report a reliability percentage.
 
+agent:
+  workflow: merge-remote-main
+
 # Security policy. agent-proxy declares no protected-binary routing of its own -
 # the container acceptance path uses `docker` directly by design - so the policy
 # is empty. Note: `ward doctor` (ward#450) treats an empty `security:` as
