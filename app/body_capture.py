@@ -38,6 +38,40 @@ class BodyCaptureError(RuntimeError):
     """The enabled capture contract could not be completed exactly."""
 
 
+def last_user_message(body: dict[str, Any]) -> str | None:
+    """Return the verbatim text of the final user message, or None when there is none.
+
+    The captured request body already holds this text, but only as the last
+    matching element of a variable-length messages list. No downstream log
+    pipeline field path can address a last element, so the projection happens
+    here where the position is known. This is a convenience projection beside
+    the complete body, never a substitute for it, so an unreadable or absent
+    message omits the field rather than failing the capture.
+    """
+
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content if content.strip() else None
+        if isinstance(content, list):
+            parts = [
+                part["text"]
+                for part in content
+                if isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            ]
+            joined = "\n".join(parts)
+            return joined if joined.strip() else None
+        return None
+    return None
+
+
 def _canonical_body(body: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Return deterministic JSON and the exact JSON-safe object written to logs."""
 
@@ -113,6 +147,9 @@ class ModelBodyCapture:
             "trace_id": trace_id,
             "span_id": span_id,
         }
+        user_message = last_user_message(normalized)
+        if user_message is not None:
+            fields["agentproxy.user_message"] = user_message
         try:
             span.set_attribute("agentproxy.request.body", canonical)
             _emit_capture_log(span, "model.request.captured", fields)

@@ -7,7 +7,7 @@ import json
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
-from app.body_capture import BodyCaptureError, ModelBodyCapture
+from app.body_capture import BodyCaptureError, ModelBodyCapture, last_user_message
 
 
 def _span():
@@ -71,6 +71,108 @@ def test_capture_uses_canonical_json_and_exactly_two_correlated_events(capsys) -
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def test_last_user_message_reads_the_final_user_turn_not_the_first() -> None:
+    body = {
+        "messages": [
+            {"role": "system", "content": "be helpful"},
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "second question"},
+        ]
+    }
+
+    assert last_user_message(body) == "second question"
+
+
+def test_last_user_message_survives_trailing_tool_rounds() -> None:
+    body = {
+        "messages": [
+            {"role": "user", "content": "what is the server state"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}]},
+            {"role": "tool", "tool_call_id": "c1", "content": '{"co2": 325}'},
+        ]
+    }
+
+    assert last_user_message(body) == "what is the server state"
+
+
+def test_last_user_message_joins_text_parts_and_ignores_other_parts() -> None:
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look at this"},
+                    {"type": "image_url", "image_url": {"url": "https://example.test/a.png"}},
+                    {"type": "text", "text": "and this"},
+                ],
+            }
+        ]
+    }
+
+    assert last_user_message(body) == "look at this\nand this"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"messages": "not a list"},
+        {"messages": []},
+        {"messages": [{"role": "system", "content": "no user turn"}]},
+        {"messages": [{"role": "user", "content": "   "}]},
+        {"messages": [{"role": "user", "content": None}]},
+        {"messages": [{"role": "user", "content": [{"type": "image_url"}]}]},
+        {"messages": ["not a dict"]},
+    ],
+)
+def test_last_user_message_returns_none_rather_than_raising(body) -> None:
+    assert last_user_message(body) is None
+
+
+def test_request_capture_carries_the_user_message(capsys) -> None:
+    request_body = {
+        "messages": [
+            {"role": "system", "content": "be helpful"},
+            {"role": "user", "content": "where should I start"},
+        ]
+    }
+    capture = ModelBodyCapture(
+        enabled=True,
+        request_id="request-123",
+        request_body=request_body,
+    )
+
+    with _span() as span:
+        capture.emit_request(span)
+
+    event = next(
+        payload
+        for payload in map(json.loads, capsys.readouterr().out.splitlines())
+        if payload.get("event") == "model.request.captured"
+    )
+    assert event["agentproxy.user_message"] == "where should I start"
+    assert event["request.body"] == request_body
+
+
+def test_request_capture_omits_the_field_when_there_is_no_user_message(capsys) -> None:
+    capture = ModelBodyCapture(
+        enabled=True,
+        request_id="request-123",
+        request_body={"messages": [{"role": "system", "content": "be helpful"}]},
+    )
+
+    with _span() as span:
+        capture.emit_request(span)
+
+    event = next(
+        payload
+        for payload in map(json.loads, capsys.readouterr().out.splitlines())
+        if payload.get("event") == "model.request.captured"
+    )
+    assert "agentproxy.user_message" not in event
 
 
 def test_incomplete_capture_requires_a_closed_set_reason() -> None:

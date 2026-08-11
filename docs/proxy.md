@@ -105,6 +105,14 @@ event and one structured response-body event for each boundary model call:
 
 Both events carry `agentproxy.capture.schema_version=1`,
 `agentproxy.capture.status`, `agentproxy.request_id`, `trace_id`, and `span_id`.
+`model.request.captured` also carries `agentproxy.user_message` holding the
+verbatim text of the final user turn, present only when the request has one.
+That text is already inside `request.body`, but only as the last matching
+element of a variable-length messages list, and no log pipeline field path can
+address a last element. The field is a convenience projection beside the
+complete body rather than a selected-field capture mode, so an absent or
+unreadable user message omits it instead of failing the capture. Adding it is
+backward compatible and does not advance the capture schema version.
 The `trace_id` and request-span `span_id` pair the two events even when one
 Sirens Echo turn makes multiple model calls. The request span also carries
 canonical JSON strings under `agentproxy.request.body` and
