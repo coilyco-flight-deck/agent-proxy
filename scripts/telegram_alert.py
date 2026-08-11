@@ -11,16 +11,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+
 def build_message():
-    return "\n".join([
-        "CI failed on main",
-        f"repo: {os.environ['REPO']}",
-        f"workflow: {os.environ['WORKFLOW']}",
-        f"job: {os.environ['JOB']}",
-        f"ref: {os.environ['REF']}",
-        f"sha: {os.environ['SHA']}",
-        f"run: {os.environ['RUN_URL']}",
-    ])
+    return "\n".join(
+        [
+            "CI failed on main",
+            f"repo: {os.environ['REPO']}",
+            f"workflow: {os.environ['WORKFLOW']}",
+            f"job: {os.environ['JOB']}",
+            f"ref: {os.environ['REF']}",
+            f"sha: {os.environ['SHA']}",
+            f"run: {os.environ['RUN_URL']}",
+        ]
+    )
+
 
 def main():
     bot_token = os.environ.get("BOT_TOKEN", "")
@@ -54,6 +58,7 @@ def main():
         print(f"telegram alert failed ({type(exc).__name__})", file=sys.stderr)
         return 1
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
