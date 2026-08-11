@@ -105,6 +105,28 @@ event and one structured response-body event for each boundary model call:
 
 Both events carry `agentproxy.capture.schema_version=1`,
 `agentproxy.capture.status`, `agentproxy.request_id`, `trace_id`, and `span_id`.
+Each event also carries a projection of the fields worth reading without
+parsing the whole body. `model.request.captured` carries
+`agentproxy.user_message`, the verbatim text of the final user turn.
+`model.response.captured` carries `agentproxy.finish_reason`,
+`agentproxy.assistant_message`, `agentproxy.completion_tokens`, and
+`agentproxy.prompt_tokens`, taken from the first choice and the usage block.
+
+A projection is a convenience beside the complete body, never a selected-field
+capture mode, and never a substitute for the body it sits next to. Every value
+is already inside `request.body` or `response.body`. They are lifted here
+because Agent Proxy is the one place that serves every capture consumer, and
+because the user message is otherwise unreachable: it is the last matching
+element of a variable-length messages list, and no log pipeline field path can
+address a last element.
+
+Projection is total. An absent, blank, or unreadable value omits its field
+rather than failing a capture that would otherwise have succeeded, so a request
+with no user turn and an incomplete response both still capture. A truncated
+completion is legible from the projection alone, as `agentproxy.finish_reason`
+of `length` with `agentproxy.completion_tokens` at the request's cap and no
+`agentproxy.assistant_message`. Adding these fields is backward compatible and
+does not advance the capture schema version.
 The `trace_id` and request-span `span_id` pair the two events even when one
 Sirens Echo turn makes multiple model calls. The request span also carries
 canonical JSON strings under `agentproxy.request.body` and
