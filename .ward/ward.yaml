@@ -1,6 +1,7 @@
 # Per-repo command allowlist for agent-proxy. Read by ward's cli-guard repocfg
 # loader for `ward exec <verb>` (and, via the unknown-verb fallback, bare
-# `ward <verb>`). Field reference: coilyco-flight-deck/ward docs/ward-yaml.md.
+# `ward <verb>`). Field reference:
+# https://forgejo.coilysiren.me/coilyco-flight-deck/ward/src/branch/main/docs/ward-yaml.md
 #
 # Schema note (agent-proxy#19): this file previously used the legacy flat
 # `verb: cmd` form, which the current ward (v0.359+) cannot parse - it needs a
@@ -97,3 +98,7 @@ agent:
 # uv). `ward exec <verb>` does not need either, so it is the supported entry
 # point for the harness verbs below.
 security: {}
+
+catalog:
+  description: "Observability, trajectory collection, and data-processing plane for the agentic operations stack. Serves an OpenAI-compatible surface in front of LiteLLM, owns identity, correlation, context safety, and model I/O capture, and assembles trajectories for evaluation and dataset export. Deployed to ser8 by coilyco-bridge/deploy."
+  dependsOn: []

@@ -77,3 +77,9 @@ Status legend:
 - [`route-registry.md`](route-registry.md) documents logical routing and rollback.
 - [`ROADMAP.md`](ROADMAP.md) and [`work-graph.md`](work-graph.md) define execution order.
 - [`proxy.md`](proxy.md) remains the detailed guide to the currently landed reliability behavior.
+
+## See also
+
+- [README.md](../README.md) - human-facing intro and current charter.
+- [AGENTS.md](../AGENTS.md) - agent instructions and ownership boundaries.
+- [.ward/ward.yaml](../.ward/ward.yaml) - allowlisted commands and catalog metadata.

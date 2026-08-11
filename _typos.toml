@@ -1,0 +1,3 @@
+# ser8 is a host name in this fleet, and typos splits it into `ser` + `8`.
+[default.extend-words]
+ser = "ser"
