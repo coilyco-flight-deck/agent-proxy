@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory  
+# Set working directory
 WORKDIR /app
 
 # Copy and install Python dependencies using uv (frozen, runtime-only)
@@ -22,5 +22,5 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Expose the proxy port
 EXPOSE 8080
 
-# Define entrypoint for service  
+# Define entrypoint for service
 CMD ["python", "-m", "app.main"]

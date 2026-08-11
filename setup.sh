@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Setup script to install dependencies and run tests  
+# Setup script to install dependencies and run tests
 # This makes the developer workflow reproducible from a fresh checkout.
 
 set -e

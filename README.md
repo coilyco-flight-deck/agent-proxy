@@ -132,3 +132,9 @@ with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
   readiness, inference evidence, and the no-log health contract.
 - [`docs/work-graph.md`](docs/work-graph.md) links the new dependency-ordered implementation issues.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) explains sequencing without treating future capabilities as prohibited work.
+
+## See also
+
+- [AGENTS.md](AGENTS.md) - agent instructions, ownership boundaries, and conventions.
+- [docs/FEATURES.md](docs/FEATURES.md) - inventory of what ships today.
+- [.ward/ward.yaml](.ward/ward.yaml) - allowlisted commands and catalog metadata.
