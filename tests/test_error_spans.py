@@ -93,7 +93,8 @@ def test_nonstreaming_transport_failure_marks_attempt_span_error(traced, monkeyp
     assert errored, "a failed dispatch must produce at least one error span"
     for span in errored:
         assert _has_exception(span), f"{span.name} has error status but no exception event"
-        assert span.status.description == "upstream_transport_failed"
+        assert span.attributes["error.type"] == "upstream_transport_failed"
+        assert span.attributes["error.stage"] == "upstream"
 
 
 def test_validation_failure_marks_attempt_span_error(traced, monkeypatch):
@@ -110,7 +111,7 @@ def test_validation_failure_marks_attempt_span_error(traced, monkeypatch):
 
     errored = _error_spans(traced)
     assert errored
-    assert any(s.status.description == "response_validation_failed" for s in errored)
+    assert any(s.attributes["error.type"] == "response_validation_failed" for s in errored)
     for span in errored:
         assert _has_exception(span)
 
@@ -221,7 +222,7 @@ def test_streaming_connect_failure_records_an_error_span(traced, monkeypatch):
     assert errored, "a streaming connect failure must produce an error span"
     for span in errored:
         assert _has_exception(span)
-        assert span.status.description == "upstream_transport_failed"
+        assert span.attributes["error.type"] == "upstream_transport_failed"
     assert errored[0].status.status_code is StatusCode.ERROR
 
 

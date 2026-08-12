@@ -137,6 +137,8 @@ with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
   readiness, inference evidence, and the no-log health contract.
 - [`docs/context-safety-settings.md`](docs/context-safety-settings.md) explains
   why the `num_ctx` settings hold the values they do.
+- [`docs/exception-taxonomy.md`](docs/exception-taxonomy.md) defines the closed
+  error-code set, its stage tags, and the grouping-cardinality bound.
 - [`docs/backend-catalog.md`](docs/backend-catalog.md) explains catalog caching,
   fail-open discovery, and prompt measurement.
 - [`docs/ward-verbs.md`](docs/ward-verbs.md) records per-verb rationale and the

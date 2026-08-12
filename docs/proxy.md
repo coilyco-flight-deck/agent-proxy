@@ -57,8 +57,10 @@ request path. Logs outside a valid span omit both fields.
 
 Every handled request, stream, validation, transport, queue-worker, and
 trajectory-persistence failure records an OpenTelemetry `exception` event and
-marks its span as an error. The exception uses a static service-local type and
-a closed-set error code as its message. Dynamic diagnostics remain outside the
+marks its span as an error. The exception uses a static service-local type, a
+closed-set human summary as its message, and `error.type` plus `error.stage`
+attributes drawn from the bounded taxonomy in
+[exception-taxonomy.md](exception-taxonomy.md). Dynamic diagnostics remain outside the
 exception grouping event, giving the SigNoz Exceptions page complete baseline
 coverage without adding new body capture.
 
