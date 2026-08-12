@@ -13,7 +13,9 @@ from pydantic import BaseModel, ConfigDict
 from app.trajectory.evaluation import EvaluationRecord, summarize_evaluations
 from app.trajectory.materialize import MaterializedTrajectory
 
-ViewName = Literal["reliability", "cost_latency", "policy", "evaluation", "harness_fit"]
+ViewName = Literal[
+    "reliability", "cost_latency", "policy", "evaluation", "harness_fit", "skill_fit"
+]
 
 
 def _utc_now() -> datetime:
@@ -125,6 +127,13 @@ _CONTRACTS: dict[ViewName, QueryContract] = {
         purpose="Comparative reliability, retry, fallback, latency, and evaluation evidence.",
         required_sources=("materialized trajectories", "evaluation records"),
     ),
+    "skill_fit": QueryContract(
+        name="skill_fit",
+        schema_name="agentproxy.view.skill-fit",
+        schema_version="1.0",
+        purpose="Observed skill selection and use against reliability and evaluation evidence.",
+        required_sources=("materialized trajectories", "evaluation records"),
+    ),
 }
 
 
@@ -163,6 +172,7 @@ class OperationalViewBuilder:
             "policy": self._policy,
             "evaluation": self._evaluation,
             "harness_fit": self._harness_fit,
+            "skill_fit": self._skill_fit,
         }
         rows = builders[name](visible)
         return OperationalView(
@@ -322,6 +332,73 @@ class OperationalViewBuilder:
                     "latency_ms": sum(record.latency_ms for record in records),
                     "cost_by_currency": {
                         currency: format(amount, "f") for currency, amount in sorted(costs.items())
+                    },
+                    "source_trajectory_ids": tuple(record.trajectory_id for record in records),
+                    "access_tier": (
+                        "restricted"
+                        if any(record.access_tier == "restricted" for record in records)
+                        else "internal"
+                    ),
+                }
+            )
+        return tuple(rows)
+
+    def _skill_fit(
+        self, trajectories: tuple[MaterializedTrajectory, ...]
+    ) -> tuple[dict[str, Any], ...]:
+        """Group observed skill evidence by skill, role, harness, and model.
+
+        Selection and use are separate facts and are never collapsed. A skill
+        the manifest selected but that no observation records is the
+        missing-evidence case the issue asks to keep explicit, so it still
+        produces a row with `observed_use` false and a zero use count.
+        """
+        groups: dict[tuple[str, str, str, str], list[MaterializedTrajectory]] = defaultdict(list)
+        selected_only: set[tuple[str, str, str, str]] = set()
+        for trajectory in trajectories:
+            roles = trajectory.actor_roles or ("unknown",)
+            harnesses = trajectory.harnesses or ("unknown",)
+            models = trajectory.models or ("unknown",)
+            skills = set(trajectory.skills_selected) | set(trajectory.skills_used)
+            for skill in skills:
+                for role in roles:
+                    for harness in harnesses:
+                        for model in models:
+                            key = (skill, role, harness, model)
+                            groups[key].append(trajectory)
+                            if skill not in trajectory.skills_used:
+                                selected_only.add(key)
+        rows: list[dict[str, Any]] = []
+        for key, records in sorted(groups.items()):
+            skill, role, harness, model = key
+            count = len(records)
+            completed = sum(record.status == "complete" for record in records)
+            use_count = sum(record.skill_use_counts.get(skill, 0) for record in records)
+            evaluated = tuple(
+                summarize_evaluations(record.trajectory_id, self.evaluations) for record in records
+            )
+            rows.append(
+                {
+                    "skill": skill,
+                    "role": role,
+                    "harness": harness,
+                    "model": model,
+                    "observed_use": any(skill in record.skills_used for record in records),
+                    "observed_use_count": use_count,
+                    "selected_without_observed_use": key in selected_only and use_count == 0,
+                    "trajectory_count": count,
+                    "completion_rate": completed / count,
+                    "retry_count": sum(record.retry_count for record in records),
+                    "fallback_count": sum(record.fallback_count for record in records),
+                    "human_intervention_count": sum(
+                        record.human_intervention_count for record in records
+                    ),
+                    "evaluation": {
+                        "labels": sorted(
+                            {label for summary in evaluated for label in summary.labels}
+                        ),
+                        "disagreement": any(summary.disagreement for summary in evaluated),
+                        "has_late_records": any(summary.has_late_records for summary in evaluated),
                     },
                     "source_trajectory_ids": tuple(record.trajectory_id for record in records),
                     "access_tier": (

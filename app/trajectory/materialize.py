@@ -17,7 +17,7 @@ from app.trajectory.schema import TrajectoryEvent
 from app.trajectory.store import TrajectoryStore
 
 MATERIALIZATION_SCHEMA_NAME = "agentproxy.trajectory.materialized"
-MATERIALIZATION_SCHEMA_VERSION = "1.0"
+MATERIALIZATION_SCHEMA_VERSION = "1.1"
 
 _STRONG_CORRELATIONS = (
     "episode_id",
@@ -77,6 +77,9 @@ class MaterializedTrajectory(BaseModel):
     providers: tuple[str, ...]
     harnesses: tuple[str, ...]
     actor_roles: tuple[str, ...]
+    skills_selected: tuple[str, ...] = ()
+    skills_used: tuple[str, ...] = ()
+    skill_use_counts: dict[str, int] = Field(default_factory=dict)
     human_intervention_count: int = Field(ge=0)
     access_tier: str
     content_sha256: str
@@ -221,6 +224,8 @@ class TrajectoryMaterializer:
         providers: set[str] = set()
         harnesses: set[str] = set()
         actor_roles: set[str] = set()
+        skills_selected: set[str] = set()
+        skill_use_counts: Counter[str] = Counter()
         access_tier = "internal"
         for event in events:
             actor_roles.add(event.actor.role)
@@ -243,7 +248,14 @@ class TrajectoryMaterializer:
                 if model_execution.cost is not None:
                     currency = model_execution.cost.currency
                     costs[currency] = costs.get(currency, Decimal(0)) + model_execution.cost.amount
+            skill = event.attributes.get("ward.skill")
+            if isinstance(skill, str) and skill:
+                count = event.attributes.get("ward.skill.count")
+                skill_use_counts[skill] += count if isinstance(count, int) and count > 0 else 1
             payload = event.payload.model_dump(mode="json", exclude_none=True)
+            for claim in payload.get("capability_claims") or ():
+                if isinstance(claim, str) and claim:
+                    skills_selected.add(claim)
             if event.event_type == "policy.decided":
                 decision = payload.get("decision")
                 if isinstance(decision, str):
@@ -277,6 +289,9 @@ class TrajectoryMaterializer:
             providers=tuple(sorted(providers)),
             harnesses=tuple(sorted(harnesses)),
             actor_roles=tuple(sorted(actor_roles)),
+            skills_selected=tuple(sorted(skills_selected)),
+            skills_used=tuple(sorted(skill_use_counts)),
+            skill_use_counts=dict(sorted(skill_use_counts.items())),
             human_intervention_count=event_types["human.intervened"],
             access_tier=access_tier,
             content_sha256="",

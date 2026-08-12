@@ -63,6 +63,7 @@ def test_query_contracts_cover_every_required_operational_dimension():
         "policy",
         "evaluation",
         "harness_fit",
+        "skill_fit",
     ]
 
 

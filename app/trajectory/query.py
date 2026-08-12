@@ -13,7 +13,9 @@ from urllib.parse import quote
 
 import httpx
 
-ViewName = Literal["reliability", "cost_latency", "policy", "evaluation", "harness_fit"]
+ViewName = Literal[
+    "reliability", "cost_latency", "policy", "evaluation", "harness_fit", "skill_fit"
+]
 INVESTIGATION_VIEWS: tuple[ViewName, ...] = (
     "reliability",
     "cost_latency",
@@ -204,6 +206,63 @@ def compare_harness_fit(
     }
 
 
+def evaluate_skill_use(
+    client: TrajectoryQueryClient,
+    *,
+    skill: str | None = None,
+    role: str | None = None,
+    harness: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Filter the governed skill-fit view for adoption and observed outcomes."""
+    view = client.view("skill_fit")
+    rows = [
+        cast(dict[str, Any], row)
+        for row in view["rows"]
+        if (skill is None or row.get("skill") == skill)
+        and (role is None or row.get("role") == role)
+        and (harness is None or row.get("harness") == harness)
+        and (model is None or row.get("model") == model)
+    ]
+    rows.sort(
+        key=lambda row: (
+            str(row.get("skill", "")),
+            str(row.get("role", "")),
+            str(row.get("harness", "")),
+            str(row.get("model", "")),
+        )
+    )
+    selected_only = [row for row in rows if row.get("selected_without_observed_use")]
+    return {
+        "schema_name": "agentproxy.query.skill-fit",
+        "schema_version": "1.0",
+        "filters": {
+            key: value
+            for key, value in {
+                "skill": skill,
+                "role": role,
+                "harness": harness,
+                "model": model,
+            }.items()
+            if value is not None
+        },
+        "view": _view_summary(view, len(rows)),
+        "rows": rows,
+        "selected_without_observed_use": [
+            {key: row[key] for key in ("skill", "role", "harness", "model")}
+            for row in selected_only
+        ],
+        "interpretation_limits": [
+            "Selection and observed use are separate facts. A selected skill with no "
+            "observation is missing evidence, not proof the skill went unused.",
+            "Skill-fit rows are observational aggregates, not causal proof that a skill "
+            "caused an outcome, and never authorize a Ward action.",
+            "Interpret completion rates with trajectory count and freshness.",
+            "Unresolved evaluation disagreement is reported, not resolved.",
+        ],
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-proxy-query",
@@ -236,6 +295,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     fit_parser.add_argument("--harness", help="Exact harness name.")
     fit_parser.add_argument("--model", help="Exact model name.")
+
+    skill_parser = commands.add_parser(
+        "skill-use",
+        help="Evaluate observed skill selection, adoption, and outcomes.",
+    )
+    skill_parser.add_argument("--skill", help="Exact skill name.")
+    skill_parser.add_argument("--role", help="Exact actor role.")
+    skill_parser.add_argument("--harness", help="Exact harness name.")
+    skill_parser.add_argument("--model", help="Exact model name.")
     return parser
 
 
@@ -258,6 +326,14 @@ def run(argv: Sequence[str] | None = None) -> int:
                         workflow=args.workflow,
                         trajectory=args.trajectory,
                     ),
+                )
+            elif args.command == "skill-use":
+                result = evaluate_skill_use(
+                    client,
+                    skill=args.skill,
+                    role=args.role,
+                    harness=args.harness,
+                    model=args.model,
                 )
             else:
                 result = compare_harness_fit(
