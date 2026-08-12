@@ -62,6 +62,15 @@ a closed-set error code as its message. Dynamic diagnostics remain outside the
 exception grouping event, giving the SigNoz Exceptions page complete baseline
 coverage without adding new body capture.
 
+`app.obs.record_error` is the single writer of that telemetry, so the event and
+the `StatusCode.ERROR` status can never drift apart. Failure is recorded at
+**attempt** granularity: a retried attempt and a dead backend each keep their own
+error span, while the attempt that recovers or serves the request is left clean.
+A transient blip therefore stays visible in Error Management without turning a
+request that ultimately succeeded into a false alert. `tests/test_error_spans.py`
+holds that contract for the non-streaming, streaming, retry-recovery,
+backend-fallback, and redaction paths.
+
 FastAPI instrumentation is installed while the application is assembled,
 before Starlette freezes its middleware stack. The HTTP server span extracts
 the caller's W3C `traceparent`, and `request.chat` or `request.completions`
