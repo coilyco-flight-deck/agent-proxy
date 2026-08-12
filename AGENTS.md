@@ -37,7 +37,8 @@ There is no Makefile. `ward exec` runs each `run:` argv directly through uv.
 ## Validation
 
 - `ward exec format-check`, `ward exec lint`, `ward exec typecheck`, and `ward exec test` are the offline gates.
-- `pre-commit run --all-files` runs the catalog suite. Never pass `--no-verify`.
+- `ward exec pre-commit` runs the catalog suite over all tracked files. Never pass `--no-verify`.
+- A fresh clone has no hooks in `.git/hooks`. Run `ward exec pre-commit-install` once per clone before relying on the commit-time gate.
 - `ward exec test-container` needs a Docker daemon. `ward exec boot-probe` is the daemonless equivalent.
 
 ## Safety

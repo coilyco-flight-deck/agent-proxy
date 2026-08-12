@@ -87,9 +87,14 @@ ward exec test
 ward exec lint
 ward exec typecheck
 ward exec format-check
+ward exec pre-commit
 ward exec boot-probe
 ward exec smoke
 ```
+
+`ward exec pre-commit` runs the full validation suite over every tracked file.
+A fresh clone has no hooks wired into `.git/hooks`, so run `ward exec
+pre-commit-install` once per clone to get the pre-commit and pre-push gates.
 
 Run the current proxy or its container acceptance test:
 
