@@ -344,6 +344,36 @@ def test_mcp_streamable_http_lists_tools_and_models(client):
     assert set(models_result.json()["result"]["structuredContent"]["models"]) == set(CATALOG)
 
 
+def test_mcp_declares_a_static_tool_roster(client):
+    """A caching client's invalidation contract (issue #102).
+
+    Stateless HTTP gives the server no channel for an unsolicited notification,
+    so a client that cached the roster and waited for
+    ``notifications/tools/list_changed`` would wait forever. Declaring
+    ``listChanged`` false is what makes caching correct, and a silent flip to
+    true would break every caching client. See docs/mcp.md.
+    """
+    initialized = _mcp_post(
+        client,
+        "initialize",
+        {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "roster-cache-client", "version": "1.0"},
+        },
+    )
+    assert initialized.status_code == 200
+    assert initialized.json()["result"]["capabilities"]["tools"] == {"listChanged": False}
+
+
+def test_mcp_tool_roster_is_identical_across_discoveries(client):
+    # `list_models` reads the live catalog at call time, which is a tool result
+    # and not a definition, so rediscovery can never return anything new.
+    first = _mcp_post(client, "tools/list", request_id=10).json()["result"]["tools"]
+    second = _mcp_post(client, "tools/list", request_id=11).json()["result"]["tools"]
+    assert first == second
+
+
 def test_mcp_send_prompt_uses_chat_completion_path(client):
     response = _mcp_post(
         client,

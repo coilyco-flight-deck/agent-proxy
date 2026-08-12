@@ -13,6 +13,30 @@ OpenAI-compatible API shape.
   `max_tokens`, and `temperature` values. It returns the normalized content,
   reasoning content, tool calls, finish reason, and token usage.
 
+## Roster stability
+
+The tool roster is static. Agent Proxy declares `tools.listChanged: false` at
+initialization and never sends `notifications/tools/list_changed`, so a client
+may discover the roster once and cache it for the life of its process.
+
+That declaration is a contract rather than an accident of the current tool
+count. The transport is stateless Streamable HTTP with JSON responses, which
+gives the server no channel on which to deliver an unsolicited notification, so
+a client that cached the roster and waited for an invalidation signal would wait
+forever. `tests/test_api.py` fails if the capability flips.
+
+`list_models` returns the live model catalog, but that is a tool *result*
+computed when the tool is called, not a tool *definition*. The catalog moving
+never changes the roster, so rediscovering it buys a caller nothing.
+
+[Issue #102](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/102)
+recorded one `mcp.tools.list` per turn against a surface that almost never
+changes. The client-side cache that fixes it belongs to the MCP client, which
+for the Discord path is Sirens Echo
+([sirens-echo#163](https://forgejo.coilysiren.me/coilyco-gaming/sirens-echo/issues/163)).
+This section is the server-side half: the guarantee that makes such a cache
+correct against Agent Proxy.
+
 `send_prompt` enters the same non-streaming chat path as
 `/v1/chat/completions`. Model resolution, context budgeting, queue admission,
 retry, fallback, circuit breaking, request telemetry, and bounded trajectory

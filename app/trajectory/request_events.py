@@ -93,6 +93,7 @@ class RequestLifecycle:
         attributes = {**self._attributes(), "agentproxy.request.outcome": outcome}
         if result is not None:
             attributes.update(result.ollama_measurements_ms())
+            attributes.update(result.cache_usage_attributes())
             attributes["gen_ai.usage.input_tokens"] = result.prompt_eval_count
             attributes["gen_ai.usage.output_tokens"] = result.eval_count
         return attributes

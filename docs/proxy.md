@@ -19,6 +19,7 @@ documents already link to.
 - [SigNoz content viewing contract](proxy-signoz-viewing.md)
 - [Capture projections](proxy-capture-projections.md)
 - [Response validation](proxy-validation.md)
+- [Prompt cache accounting](proxy-prompt-cache.md)
 - [Configuration](proxy-configuration.md)
 - [Auto num_ctx and the NUM_PARALLEL coupling](proxy-num-ctx.md)
 - [Running, proving, and metrics](proxy-operations.md)

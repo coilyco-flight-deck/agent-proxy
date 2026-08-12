@@ -47,6 +47,11 @@ class UpstreamResult:
     prompt_eval_duration: int = 0
     eval_duration: int = 0
     done_reason: str = "stop"
+    # Provider prompt-cache accounting (issue #101). Absence and a reported zero
+    # are different facts, so the counts mean nothing without the flag.
+    cache_usage_reported: bool = False
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     # Set by dispatch (issue #33) when the backend delivered a shorter context than
     # asked for - the OLLAMA_NUM_PARALLEL division. Surfaced loud, never silent.
     context_truncated: bool = False
@@ -63,6 +68,65 @@ class UpstreamResult:
         }
         return {name: value / 1_000_000 for name, value in values.items() if value > 0}
 
+    @property
+    def cache_miss_tokens(self) -> int:
+        """Prompt tokens the provider billed at the uncached rate."""
+
+        return max(self.prompt_eval_count - self.cache_read_tokens, 0)
+
+    def cache_usage_attributes(self) -> dict[str, int]:
+        """Return the prompt-cache span attributes, empty when unreported."""
+
+        if not self.cache_usage_reported:
+            return {}
+        return {
+            "gen_ai.usage.cache_read_input_tokens": self.cache_read_tokens,
+            "gen_ai.usage.cache_creation_input_tokens": self.cache_write_tokens,
+        }
+
+
+def _first_int(source: dict[str, Any], *names: str) -> int | None:
+    """Return the first present numeric field, or None when the provider is silent."""
+
+    for name in names:
+        value = source.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        return int(value)
+    return None
+
+
+def parse_cache_usage(usage: dict[str, Any] | None) -> tuple[bool, int, int]:
+    """Normalize one provider's prompt-cache accounting to ``(reported, read, write)``.
+
+    Three wire shapes reach this proxy through LiteLLM and none of them agree:
+
+    * DeepSeek reports ``prompt_cache_hit_tokens`` and ``prompt_cache_miss_tokens``
+      natively, and its caching is automatic with no request-side opt-in.
+    * OpenAI-compatible providers report ``prompt_tokens_details.cached_tokens``,
+      which is also the field LiteLLM normalizes into.
+    * Anthropic-style providers report ``cache_read_input_tokens`` beside a
+      separate ``cache_creation_input_tokens`` write charge.
+
+    A provider that reports nothing is not a cache miss, it is an unmeasured
+    route, so ``reported`` stays False and the counts are never published.
+    """
+    if not isinstance(usage, dict):
+        return (False, 0, 0)
+
+    details = usage.get("prompt_tokens_details")
+    detail_cached = _first_int(details, "cached_tokens") if isinstance(details, dict) else None
+    read = _first_int(usage, "prompt_cache_hit_tokens", "cache_read_input_tokens")
+    if read is None:
+        read = detail_cached
+    write = _first_int(usage, "cache_creation_input_tokens", "cache_creation_tokens")
+    # A bare miss count still proves the provider accounts for caching, even on
+    # the turn that populated the cache and read nothing back.
+    miss_only = _first_int(usage, "prompt_cache_miss_tokens") is not None
+    if read is None and write is None and not miss_only:
+        return (False, 0, 0)
+    return (True, max(read or 0, 0), max(write or 0, 0))
+
 
 def set_result_span_attributes(span: Any, result: UpstreamResult) -> None:
     """Attach normalized usage plus any Ollama-native final-response timings."""
@@ -72,8 +136,10 @@ def set_result_span_attributes(span: Any, result: UpstreamResult) -> None:
     span.set_attribute(
         "response.finish_reasons", [result.done_reason] if result.done_reason else []
     )
-    for name, value in result.ollama_measurements_ms().items():
-        span.set_attribute(name, value)
+    for name, tokens in result.cache_usage_attributes().items():
+        span.set_attribute(name, tokens)
+    for name, duration in result.ollama_measurements_ms().items():
+        span.set_attribute(name, duration)
 
 
 _client: httpx.AsyncClient | None = None
@@ -248,6 +314,13 @@ def _timeout(backend: Backend) -> httpx.Timeout:
 
 
 def _parse_chat_response(data: dict[str, Any]) -> UpstreamResult:
+    """Normalize an Ollama-shaped response, or this module's canonical chunk.
+
+    The three ``cache_*`` keys never appear on Ollama's own wire format. They
+    exist on the canonical chunk :func:`chat_stream` normalizes an OpenAI-dialect
+    stream into, which is the only path by which a caching provider's accounting
+    reaches the terminal result the streaming surface reads back.
+    """
     message = data.get("message") or {}
     return UpstreamResult(
         model=data.get("model", ""),
@@ -261,6 +334,9 @@ def _parse_chat_response(data: dict[str, Any]) -> UpstreamResult:
         prompt_eval_duration=int(data.get("prompt_eval_duration", 0) or 0),
         eval_duration=int(data.get("eval_duration", 0) or 0),
         done_reason=data.get("done_reason", "stop") or "stop",
+        cache_usage_reported=bool(data.get("cache_usage_reported", False)),
+        cache_read_tokens=int(data.get("cache_read_tokens", 0) or 0),
+        cache_write_tokens=int(data.get("cache_write_tokens", 0) or 0),
         raw=data,
     )
 
@@ -277,14 +353,19 @@ def parse_stream_result(data: dict[str, Any], fallback_model: str = "") -> Upstr
 def _parse_openai_chat_response(data: dict[str, Any]) -> UpstreamResult:
     choice = (data.get("choices") or [{}])[0]
     message = choice.get("message") or {}
+    usage = data.get("usage") or {}
+    cache_reported, cache_read, cache_write = parse_cache_usage(usage)
     return UpstreamResult(
         model=data.get("model", ""),
         content=message.get("content", "") or "",
         thinking=message.get("reasoning_content", "") or message.get("thinking", "") or "",
         tool_calls=message.get("tool_calls", []) or [],
-        prompt_eval_count=int((data.get("usage") or {}).get("prompt_tokens", 0) or 0),
-        eval_count=int((data.get("usage") or {}).get("completion_tokens", 0) or 0),
+        prompt_eval_count=int(usage.get("prompt_tokens", 0) or 0),
+        eval_count=int(usage.get("completion_tokens", 0) or 0),
         done_reason=choice.get("finish_reason", "stop") or "stop",
+        cache_usage_reported=cache_reported,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
         raw=data,
     )
 
@@ -470,17 +551,25 @@ async def chat_stream(
                 if choice.get("finish_reason"):
                     out["done_reason"] = choice.get("finish_reason")
                     usage = payload.get("usage") or {}
+                    cache_reported, cache_read, cache_write = parse_cache_usage(usage)
                     if payload.get("model"):
                         out["model"] = payload["model"]
                     if usage:
                         out["prompt_eval_count"] = int(usage.get("prompt_tokens", 0) or 0)
                         out["eval_count"] = int(usage.get("completion_tokens", 0) or 0)
+                    if cache_reported:
+                        out["cache_usage_reported"] = True
+                        out["cache_read_tokens"] = cache_read
+                        out["cache_write_tokens"] = cache_write
                     terminal_result = UpstreamResult(
                         model=str(payload.get("model") or backend.ollama_tag),
                         content="",
                         prompt_eval_count=int(usage.get("prompt_tokens", 0) or 0),
                         eval_count=int(usage.get("completion_tokens", 0) or 0),
                         done_reason=str(out["done_reason"]),
+                        cache_usage_reported=cache_reported,
+                        cache_read_tokens=cache_read,
+                        cache_write_tokens=cache_write,
                         raw=payload,
                     )
                 yield out
@@ -572,12 +661,16 @@ async def generate(
         )
     choice = (data.get("choices") or [{}])[0]
     usage = data.get("usage") or {}
+    cache_reported, cache_read, cache_write = parse_cache_usage(usage)
     return UpstreamResult(
         model=data.get("model", ""),
         content=choice.get("text", "") or "",
         prompt_eval_count=int(usage.get("prompt_tokens", 0) or 0),
         eval_count=int(usage.get("completion_tokens", 0) or 0),
         done_reason=choice.get("finish_reason", "stop") or "stop",
+        cache_usage_reported=cache_reported,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
         raw=data,
     )
 

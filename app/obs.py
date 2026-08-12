@@ -73,6 +73,21 @@ llm_prompt_tokens = Histogram(
     ["logical_model"],
     buckets=(1024, 4096, 8192, 16384, 32768, 49152, 65536, 98304, 131072),
 )
+llm_prompt_cache_hit_tokens_total = Counter(
+    "llm_prompt_cache_hit_tokens_total",
+    "Prompt tokens a provider served from its prompt cache (issue #101)",
+    ["logical_model"],
+)
+llm_prompt_cache_miss_tokens_total = Counter(
+    "llm_prompt_cache_miss_tokens_total",
+    "Prompt tokens a provider billed at the uncached rate (issue #101)",
+    ["logical_model"],
+)
+llm_prompt_cache_write_tokens_total = Counter(
+    "llm_prompt_cache_write_tokens_total",
+    "Prompt tokens a provider charged to populate its prompt cache (issue #101)",
+    ["logical_model"],
+)
 llm_upstream_latency_seconds = Histogram(
     "llm_upstream_latency_seconds", "Upstream generation latency", ["logical_model", "backend"]
 )
@@ -464,6 +479,31 @@ def log_on_span(
     except Exception:
         if not emitted:
             logger(event, **fields)
+
+
+def record_prompt_cache_usage(
+    logical_model: str,
+    *,
+    reported: bool,
+    read_tokens: int,
+    miss_tokens: int,
+    write_tokens: int,
+) -> None:
+    """Publish one served response's prompt-cache accounting (issue #101).
+
+    Called once per delivered response rather than per upstream attempt, so a
+    retried turn counts the tokens the caller was actually billed for. A
+    provider that reports no cache accounting publishes nothing at all: an
+    Ollama backend reuses its KV cache without saying so, and recording that
+    silence as a 100% miss would invent a regression that never happened.
+    """
+    if not reported:
+        return
+    llm_prompt_cache_hit_tokens_total.labels(logical_model=logical_model).inc(max(read_tokens, 0))
+    llm_prompt_cache_miss_tokens_total.labels(logical_model=logical_model).inc(max(miss_tokens, 0))
+    llm_prompt_cache_write_tokens_total.labels(logical_model=logical_model).inc(
+        max(write_tokens, 0)
+    )
 
 
 def emit_instrumented_action(action: InstrumentedAction) -> None:

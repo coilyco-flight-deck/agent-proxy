@@ -39,7 +39,11 @@ JSON. The measured result and its reproduction command live in
 `llm_retries_total`, `llm_fallbacks_total`, `llm_circuit_state`,
 `llm_truncation_avoided_total`, `llm_validation_failures_total`,
 `llm_context_truncated_total`, `llm_prompt_tokens`, `llm_upstream_latency_seconds`,
-`ward_skill_use_total`.
+`ward_skill_use_total`, `llm_prompt_cache_hit_tokens_total`,
+`llm_prompt_cache_miss_tokens_total`, `llm_prompt_cache_write_tokens_total`.
+
+The three prompt-cache counters publish only for a provider that accounts for
+caching. See [proxy-prompt-cache.md](proxy-prompt-cache.md).
 
 ## Out of scope here
 
