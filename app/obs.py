@@ -338,19 +338,64 @@ def _current_span():
 
 
 class _RecordedError(Exception):
-    """Static exception type whose message is always a closed-set error code."""
+    """Static exception type whose message is always a closed-set summary."""
+
+
+# The closed exception taxonomy (agent-proxy#74). Grouping cardinality in SigNoz
+# is bounded by this table. See docs/exception-taxonomy.md.
+ERROR_TAXONOMY: dict[str, tuple[str, str]] = {
+    "upstream_transport_failed": ("upstream", "Upstream backend transport failed"),
+    "response_validation_failed": ("dispatch", "Upstream response failed validation"),
+    "context_truncated": ("dispatch", "Backend delivered less context than requested"),
+    "stream_failed": ("stream", "Streaming response failed before completion"),
+    "queue_worker_failed": ("queue", "Queue worker failed while dispatching"),
+    "body_capture_failed": ("capture", "Model body capture failed"),
+    "trajectory_event_dropped": ("trajectory", "Trajectory event dropped before storage"),
+    "trajectory_event_persist_failed": ("trajectory", "Trajectory event failed to persist"),
+    "invalid_request_error": ("request", "Client request was malformed"),
+    "model_not_found": ("request", "Requested logical route is unknown"),
+    "model_unavailable": ("request", "Requested logical route is disabled"),
+    "rate_limit_error": ("request", "Request rejected by queue backpressure"),
+    "upstream_error": ("upstream", "All backends failed for the request"),
+}
+
+# Fallback for a code outside the table. Unknown codes must never widen
+# cardinality, so the offending value is discarded rather than recorded.
+UNCLASSIFIED_ERROR = "unclassified_error"
+_UNCLASSIFIED = ("unknown", "Unclassified runtime error")
+
+ERROR_STAGES: frozenset[str] = frozenset(
+    {stage for stage, _ in ERROR_TAXONOMY.values()} | {_UNCLASSIFIED[0]}
+)
+
+
+def classify_error(error_type: str) -> tuple[str, str, str]:
+    """Return ``(code, stage, summary)`` for a requested error type.
+
+    A code outside :data:`ERROR_TAXONOMY` collapses to
+    :data:`UNCLASSIFIED_ERROR`. The requested value is deliberately dropped
+    instead of being passed through, because an unbounded string reaching a
+    span attribute is exactly the cardinality and redaction failure this
+    taxonomy exists to prevent.
+    """
+    entry = ERROR_TAXONOMY.get(error_type)
+    if entry is None:
+        return (UNCLASSIFIED_ERROR, _UNCLASSIFIED[0], _UNCLASSIFIED[1])
+    return (error_type, entry[0], entry[1])
 
 
 def _record_error_on_span(span: Any, error_type: str) -> None:
     from opentelemetry.trace import Status, StatusCode
 
+    code, stage, summary = classify_error(error_type)
     span.record_exception(
-        _RecordedError(error_type),
-        attributes={"error.type": error_type},
+        _RecordedError(summary),
+        attributes={"error.type": code, "error.stage": stage},
         escaped=False,
     )
-    span.set_attribute("error.type", error_type)
-    span.set_status(Status(StatusCode.ERROR, error_type))
+    span.set_attribute("error.type", code)
+    span.set_attribute("error.stage", stage)
+    span.set_status(Status(StatusCode.ERROR, summary))
 
 
 def record_error(error_type: str, span: Any | None = None) -> None:

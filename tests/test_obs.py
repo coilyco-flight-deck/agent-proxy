@@ -217,11 +217,12 @@ def test_record_error_emits_closed_set_exception_and_error_status():
     ended = exporter.get_finished_spans()
     assert len(ended) == 1
     assert ended[0].status.status_code is StatusCode.ERROR
-    assert ended[0].status.description == "upstream_transport_failed"
+    assert ended[0].status.description == "Upstream backend transport failed"
     exception = next(event for event in ended[0].events if event.name == "exception")
     assert exception.attributes["exception.type"] == "app.obs._RecordedError"
-    assert exception.attributes["exception.message"] == "upstream_transport_failed"
+    assert exception.attributes["exception.message"] == "Upstream backend transport failed"
     assert exception.attributes["error.type"] == "upstream_transport_failed"
+    assert exception.attributes["error.stage"] == "upstream"
 
 
 def test_record_error_starts_span_for_background_failure(monkeypatch):
