@@ -44,6 +44,7 @@ from .obs import (
     log_on_span,
     metrics_text,
     record_error,
+    record_prompt_cache_usage,
 )
 from .readiness import UnknownRoute, check_route_readiness
 from .queue import QueueBusy, get_queue
@@ -232,6 +233,67 @@ def _openai_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]
     return out
 
 
+def _usage_block(result: upstream.UpstreamResult) -> dict[str, Any]:
+    """The OpenAI usage block, carrying provider cache accounting when it exists.
+
+    ``prompt_tokens_details.cached_tokens`` is the OpenAI-canonical spelling, so
+    a caller reading the proxy's compatible surface finds the cache read where it
+    expects it whichever provider served the turn. The fields appear only when
+    the provider reported them, which keeps a reported zero (a real cache miss)
+    distinguishable from an Ollama route that never accounts for caching at all.
+    """
+    usage: dict[str, Any] = {
+        "prompt_tokens": result.prompt_eval_count,
+        "completion_tokens": result.eval_count,
+        "total_tokens": result.prompt_eval_count + result.eval_count,
+    }
+    if result.cache_usage_reported:
+        usage["prompt_tokens_details"] = {"cached_tokens": result.cache_read_tokens}
+        if result.cache_write_tokens:
+            usage["cache_creation_input_tokens"] = result.cache_write_tokens
+    return usage
+
+
+def _record_prompt_cache(logical_model: str, result: upstream.UpstreamResult | None) -> None:
+    """Publish one served turn's cache accounting to the proxy's metrics."""
+
+    if result is None:
+        return
+    record_prompt_cache_usage(
+        logical_model,
+        reported=result.cache_usage_reported,
+        read_tokens=result.cache_read_tokens,
+        miss_tokens=result.cache_miss_tokens,
+        write_tokens=result.cache_write_tokens,
+    )
+
+
+def _request_shape_attrs(
+    messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+) -> dict[str, int]:
+    """Size the request's fixed prefix so roster trimming has numbers behind it.
+
+    Issue #101 measured a 53 KB system block against a four-byte user turn, with
+    17 tool schemas taking a large share of the 61 KB total. Neither share was
+    visible from the proxy, which is the one place every governed route passes
+    through, so the trade between a narrower default roster and the tool calls it
+    would lose could only be argued from the caller's own instrumentation.
+    """
+    system_bytes = sum(
+        len(json.dumps(message, ensure_ascii=False))
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "system"
+    )
+    tool_list = tools if isinstance(tools, list) else []
+    return {
+        "gen_ai.request.system_bytes": system_bytes,
+        "gen_ai.request.tool_count": len(tool_list),
+        "gen_ai.request.tool_bytes": (
+            len(json.dumps(tool_list, ensure_ascii=False)) if tool_list else 0
+        ),
+    }
+
+
 def _chat_completion_response(model_name: str, result: upstream.UpstreamResult) -> dict[str, Any]:
     message: dict[str, Any] = {"role": "assistant", "content": result.content or ""}
     if result.thinking:
@@ -248,11 +310,7 @@ def _chat_completion_response(model_name: str, result: upstream.UpstreamResult) 
         "created": int(time.time()),
         "model": model_name,
         "choices": [{"index": 0, "message": message, "finish_reason": _finish_reason(result)}],
-        "usage": {
-            "prompt_tokens": result.prompt_eval_count,
-            "completion_tokens": result.eval_count,
-            "total_tokens": result.prompt_eval_count + result.eval_count,
-        },
+        "usage": _usage_block(result),
     }
 
 
@@ -474,8 +532,11 @@ def _stream_chat_response(
         if not message["content"]:
             message["content"] = None
 
-    prompt_tokens = terminal_result.prompt_eval_count if terminal_result is not None else 0
-    completion_tokens = terminal_result.eval_count if terminal_result is not None else 0
+    usage = (
+        _usage_block(terminal_result)
+        if terminal_result is not None
+        else {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    )
     return {
         "id": completion_id,
         "object": "chat.completion",
@@ -488,11 +549,7 @@ def _stream_chat_response(
                 "finish_reason": finish_reason,
             }
         ],
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        },
+        "usage": usage,
     }
 
 
@@ -508,6 +565,7 @@ async def _stream_chat(
     lifecycle: RequestLifecycle,
     started: float,
     capture: ModelBodyCapture,
+    shape_attrs: dict[str, int],
 ) -> StreamingResponse:
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -532,7 +590,7 @@ async def _stream_chat(
         try:
             if span_cm is not None:
                 terminal_span = span_cm.__enter__()
-            for key, value in trace_ctx.attrs().items():
+            for key, value in {**trace_ctx.attrs(), **shape_attrs}.items():
                 if terminal_span is not None:
                     terminal_span.set_attribute(key, value)
             _emit_capture_request(capture, terminal_span)
@@ -668,6 +726,8 @@ async def _stream_chat(
                 **trace_ctx.attrs(),
                 outcome=outcome,
             )
+            if outcome == "ok":
+                _record_prompt_cache(trace_ctx.logical_model, terminal_result)
             _emit_request_terminal(
                 lifecycle,
                 "succeeded" if outcome == "ok" else "stream_failed",
@@ -789,6 +849,7 @@ async def _chat_completions(
         occurred_at=datetime.now(timezone.utc),
     )
     started = time.perf_counter()
+    shape_attrs = _request_shape_attrs(messages, tools)
     _emit_trajectory_event(lifecycle.action_event())
 
     if stream:
@@ -804,13 +865,14 @@ async def _chat_completions(
             lifecycle=lifecycle,
             started=started,
             capture=capture,
+            shape_attrs=shape_attrs,
         )
 
     span_cm = tracer.start_as_current_span("request.chat") if tracer is not None else None
     if span_cm is not None:
         request_span = span_cm.__enter__()
     try:
-        for key, value in trace_ctx.attrs().items():
+        for key, value in {**trace_ctx.attrs(), **shape_attrs}.items():
             if request_span is not None:
                 request_span.set_attribute(key, value)
         _emit_capture_request(capture, request_span)
@@ -927,6 +989,7 @@ async def _chat_completions(
             )
             raise
         llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+        _record_prompt_cache(model.name, result)
         _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
         log_on_span(
             request_span,
@@ -1021,11 +1084,7 @@ def _text_completion_response(model_name: str, result: upstream.UpstreamResult) 
         "choices": [
             {"index": 0, "text": result.content or "", "finish_reason": _finish_reason(result)}
         ],
-        "usage": {
-            "prompt_tokens": result.prompt_eval_count,
-            "completion_tokens": result.eval_count,
-            "total_tokens": result.prompt_eval_count + result.eval_count,
-        },
+        "usage": _usage_block(result),
     }
 
 
@@ -1095,11 +1154,13 @@ async def completions(request: Request) -> Response:
     started = time.perf_counter()
     _emit_trajectory_event(lifecycle.action_event())
 
+    shape_attrs = _request_shape_attrs(messages, None)
+
     span_cm = tracer.start_as_current_span("request.completions") if tracer is not None else None
     if span_cm is not None:
         request_span = span_cm.__enter__()
     try:
-        for key, value in trace_ctx.attrs().items():
+        for key, value in {**trace_ctx.attrs(), **shape_attrs}.items():
             if request_span is not None:
                 request_span.set_attribute(key, value)
         _emit_capture_request(capture, request_span)
@@ -1212,6 +1273,7 @@ async def completions(request: Request) -> Response:
             )
             raise
         llm_requests_total.labels(logical_model=model.name, outcome="ok").inc()
+        _record_prompt_cache(model.name, result)
         _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
         log_on_span(
             request_span,
