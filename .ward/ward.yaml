@@ -9,9 +9,9 @@
 # Migrated here so the harness invocations the docs advertise actually run.
 #
 # There is no Makefile: `ward exec` runs the `run:` argv directly, so `run: uv
-# run ...` works. `ward doctor`'s Makefile drift check does not apply (this repo
-# runs its dev tooling through uv, matching .forgejo/workflows/ci.yml, which
-# invokes the same commands via raw `uv run` because the CI runner has no ward).
+# run ...` works. Per-verb rationale, tower and daemon requirements, and the
+# empty `security:` policy live in docs/ward-verbs.md, because a key-sorter
+# would drift an inline YAML comment away from the verb it describes.
 
 commands:
   test:
@@ -54,10 +54,6 @@ commands:
     run: uv run python scripts/ingest_guard_data.py
     description: Ingest cli-guard audit rows and specgen policy evidence.
 
-  # Container acceptance tests (agent-proxy#24). test-container builds the image
-  # and asserts it boots + serves /healthz + /v1/models + /metrics (needs a
-  # Docker daemon). boot-probe validates the same boot path against the frozen
-  # runtime deps with no daemon - the check that runs in a daemonless container.
   test-container:
     run: bash ./test-container.sh
     description: Build the image and assert it boots + serves the three endpoints (needs a Docker daemon).
@@ -65,24 +61,14 @@ commands:
     run: bash ./boot_probe.sh
     description: Daemonless boot probe against the frozen runtime deps.
 
-  # Daemonless import/build smoke (agent-proxy#31): asserts the runtime deps are
-  # a proper PEP 621 array, every runtime dep is locked, and the app imports
-  # clean under runtime-only deps. No daemon, no tower - the CI gate runs it too.
   smoke:
     run: bash ./test-fixes.sh
     description: Daemonless import/build smoke (runtime deps locked, app imports clean).
 
-  # Prove the 32k truncation cliff is gone through the proxy (leg 04 local
-  # validation). Needs the tower reachable (TOWER=<host> or PROXY_TOWER_BASE_URL)
-  # and `ward serve` already running.
   proof:
     run: uv run python scripts/truncation_proof.py
     description: Prove the 32k truncation cliff is gone through the proxy (needs the tower + a running proxy).
 
-  # Reliability harness (leg 05): scores a context-growing, tool-using loop and
-  # reports a reliability percentage + failure histogram. Pass args after `--`,
-  # e.g. `ward exec reliability -- --target both --turns 6 --json out.json`.
-  # Needs the tower reachable, and `ward serve` running for the `proxy` target.
   reliability:
     run: uv run python scripts/reliability_loop.py
     description: Reliability harness - score a context-growing, tool-using loop and report a reliability percentage.
@@ -90,13 +76,6 @@ commands:
 agent:
   workflow: merge-remote-main
 
-# Security policy. agent-proxy declares no protected-binary routing of its own -
-# the container acceptance path uses `docker` directly by design - so the policy
-# is empty. Note: `ward doctor` (ward#450) treats an empty `security:` as
-# undeclared and additionally runs a Makefile drift check, so `ward doctor` does
-# not fully pass here (this repo has no Makefile and runs its tooling through
-# uv). `ward exec <verb>` does not need either, so it is the supported entry
-# point for the harness verbs below.
 security: {}
 
 catalog:

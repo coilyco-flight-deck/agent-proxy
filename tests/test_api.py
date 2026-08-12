@@ -402,10 +402,8 @@ def test_mcp_rejects_untrusted_origin(client):
 
 
 def test_chat_completion_openai_shape(client):
-    # Faked dispatch (upstream.chat -> fake ollama reply) must come back shaped to
-    # the full OpenAI chat.completion schema this step (#10) locks in: an assistant
-    # message with content, a stop finish_reason, and a coherent usage block where
-    # total_tokens is the sum of the prompt/completion counts.
+    # A faked dispatch must still come back as a full OpenAI chat.completion:
+    # assistant content, stop finish_reason, and a summing usage block (#10).
     resp = client.post(
         "/v1/chat/completions",
         json={

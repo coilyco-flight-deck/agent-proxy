@@ -54,9 +54,7 @@ class Settings(BaseSettings):
     proxy_port: int = Field(default=8080)
     log_level: str = Field(default="INFO")
 
-    # Streamable HTTP MCP transport. Production deployments set the public
-    # hostname explicitly. Requests without an Origin header are valid
-    # server-to-server traffic, while any supplied Origin must be allowlisted.
+    # Streamable HTTP MCP transport. Allowlist rules: docs/context-safety-settings.md.
     mcp_allowed_hosts: str = Field(default="127.0.0.1:*,localhost:*,testserver")
     mcp_allowed_origins: str = Field(default="http://127.0.0.1:*,http://localhost:*,http://[::1]:*")
 
@@ -83,33 +81,16 @@ class Settings(BaseSettings):
     # Context-budget headroom reserved for the completion (leg 04 step 5).
     num_ctx_headroom: int = Field(default=1024)
 
-    # VRAM-safe upper bound on the injected num_ctx (issue #32). The proxy reads
-    # a model's real context_length from /api/tags and injects
-    # min(context_length, num_ctx_ceiling) - num_ctx_headroom, so a model that
-    # advertises a huge window (qwen3:4b = 262144) never allocates more KV cache
-    # than the tower can carry. Default is the leg-01 proven-safe ceiling.
+    # VRAM-safe upper bound on the injected num_ctx (issue #32).
+    # Derivation: docs/context-safety-settings.md.
     num_ctx_ceiling: int = Field(default=49152)
 
-    # OLLAMA_NUM_PARALLEL coupling (issue #33). ollama loads num_ctx as the model's
-    # *total* context and divides it across OLLAMA_NUM_PARALLEL slots, so the usable
-    # per-request window is num_ctx / NUM_PARALLEL. A backend serving >1 slot would
-    # silently halve (or worse) the window the proxy asked for. The proxy
-    # compensates by injecting `derived_num_ctx * ollama_num_parallel` so each slot
-    # still delivers the intended per-request window. Set this to match the
-    # backend's real OLLAMA_NUM_PARALLEL. The deploy should pin the backend to 1
-    # (ansible ollama role); this is the proxy-side defense in depth. A per-backend
-    # override rides in PROXY_BACKENDS_JSON as `"num_parallel"`.
+    # Must match the backend's real OLLAMA_NUM_PARALLEL (issue #33).
+    # Why the injected value is scaled: docs/context-safety-settings.md.
     ollama_num_parallel: int = Field(default=1)
 
-    # Fail-loud verification of the delivered context (issue #33). After a call the
-    # proxy compares the backend's prompt_eval_count against the window it asked
-    # for; when the backend processed materially fewer prompt tokens than both what
-    # was sent and the per-request target, it truncated below the asked-for context
-    # (the NUM_PARALLEL division, or a misconfigured num_parallel). The tolerance is
-    # the slack that absorbs tokenizer drift between the proxy's tiktoken estimate
-    # and ollama's real count. When fail_on_context_truncation is set the request
-    # 502s loud instead of returning the short read; the default marks it
-    # (metric + finish_reason=length + structured log) but still returns content.
+    # Fail-loud verification of the delivered context (issue #33).
+    # Detection rule and both outcomes: docs/context-safety-settings.md.
     context_truncation_tolerance: float = Field(default=0.15)
     fail_on_context_truncation: bool = Field(default=False)
 
@@ -123,9 +104,8 @@ class Settings(BaseSettings):
     # ``skill-usage.json`` artifact or a directory of reaped run archives.
     ward_skill_use_input: str = Field(default="")
 
-    # Cold-path trajectory retention. The default is a file-backed SQLite WAL
-    # under the service working directory. Deployments mount this path on durable
-    # storage instead of treating the container layer as retention.
+    # Cold-path trajectory retention. Deployments mount this path on
+    # durable storage. See docs/context-safety-settings.md.
     trajectory_db_path: str = Field(default="./data/trajectory.sqlite3")
     trajectory_ingest_queue_size: int = Field(default=256, ge=1)
     # Request-path emission is opt-in until the deployment mounts the database
@@ -137,16 +117,13 @@ class Settings(BaseSettings):
     tower_base_url: str = Field(default="")
     tower_port: int = Field(default=11434)
 
-    # Backend chain override (issue #32). A JSON array of backend specs
-    # (``{"name","url","dialect"?,"chat_path"?,...}``, no tag - the tag comes
-    # from the request) lets a deploy (a ConfigMap later) supply siblings / CPU /
-    # an OpenAI-dialect fallback beyond the single built-in tower backend.
+    # Backend chain override (issue #32). Spec shape and intent:
+    # docs/context-safety-settings.md.
     backends_json: str = Field(default="")
     backends_file: str = Field(default="")
 
-    # Deploy mounts a service-local logical route registry. Compatibility mode
-    # preserves the legacy physical-model catalog only for development and an
-    # explicit rollback. Production disables it once a registry is mounted.
+    # Deploy mounts a service-local logical route registry.
+    # Compatibility-mode rules: docs/context-safety-settings.md.
     route_registry_file: str = Field(default="")
     route_registry_compatibility_mode: bool = Field(default=True)
     route_upstream_mode: Literal["litellm", "direct"] = Field(default="direct")

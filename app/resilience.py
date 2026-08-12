@@ -82,9 +82,7 @@ class UnknownModel(Exception):
     """``dispatch_resilient`` was handed a tag the backend catalog does not know."""
 
 
-# --------------------------------------------------------------------------- #
 # Response validation
-# --------------------------------------------------------------------------- #
 
 _SHORT_REPLY_CHARS = 3  # leg-01 truncation garbage is 1-3 chars of non-word junk.
 
@@ -117,11 +115,8 @@ def _is_degenerate_repetition(text: str) -> bool:
     # A single character/short substring repeated to fill the reply.
     if len(set(stripped)) <= 2 and len(stripped) >= 40:
         return True
-    # A whole multi-word line echoed far past any legitimate need - a stuck
-    # decoder loop. Distinct from the token check above, which a line carrying
-    # several distinct words slips past. ">20" tracks the "~20x" acceptance
-    # threshold; distinct lines (a real list, numbered steps) never collapse
-    # onto one bucket and so never trip it.
+    # A multi-word line echoed past any legitimate need is a stuck decoder.
+    # Threshold rationale: docs/proxy.md#validation.
     lines = [ln.strip() for ln in stripped.splitlines() if ln.strip()]
     if len(lines) > 20:
         _, count = Counter(lines).most_common(1)[0]
@@ -136,16 +131,14 @@ def validate_response(result: UpstreamResult) -> tuple[bool, str]:
     has_thinking = bool((result.thinking or "").strip())
     content = (result.content or "").strip()
 
-    # Truly empty means nothing at all. A reasoning model that emitted `thinking`
-    # but ran out of budget before final content did real work - surface it as a
-    # length-limited response rather than rerolling it into a 502.
+    # Truly empty means nothing at all: a reasoning model that emitted only
+    # `thinking` did real work. See docs/proxy.md#validation.
     if not content and not has_tools and not has_thinking:
         return False, "empty"
     if has_tools and not _tool_calls_parse(result.tool_calls):
         return False, "malformed_toolcall"
-    # leg-01 truncation garbage is a 1-3 char *non-word* reply (a stray symbol,
-    # punctuation, whitespace remnant). A short but real answer ("OK", "42",
-    # "no") contains alphanumerics and is legitimate - never reroll that.
+    # Truncation garbage is a 1-3 char *non-word* reply. A short real answer
+    # ("OK", "42") has alphanumerics. See docs/proxy.md#validation.
     if (
         not has_tools
         and 0 < len(content) <= _SHORT_REPLY_CHARS
@@ -157,9 +150,7 @@ def validate_response(result: UpstreamResult) -> tuple[bool, str]:
     return True, "ok"
 
 
-# --------------------------------------------------------------------------- #
 # Circuit breaker
-# --------------------------------------------------------------------------- #
 
 
 class CircuitState(IntEnum):
@@ -229,9 +220,7 @@ def _now() -> float:
 breakers = CircuitBreakerRegistry()
 
 
-# --------------------------------------------------------------------------- #
 # Delivered-context verification (issue #33)
-# --------------------------------------------------------------------------- #
 
 
 def _verify_delivered_context(
@@ -295,9 +284,7 @@ def _verify_delivered_context(
         )
 
 
-# --------------------------------------------------------------------------- #
 # Dispatch with resilience
-# --------------------------------------------------------------------------- #
 
 
 async def dispatch(
@@ -314,10 +301,8 @@ async def dispatch(
     last_error: str = "no backends"
     tracer = get_tracer()
     trace_attrs = trace_ctx.attrs() if trace_ctx else None
-    # The proxy's own count of the prompt it sends, held once for the whole
-    # dispatch (it is identical across attempts and backends): the reference the
-    # delivered-context check (issue #33) compares each backend's prompt_eval_count
-    # against to catch a silently-halved window.
+    # The proxy's own prompt count, identical across attempts, held once as the
+    # reference for the delivered-context check (issue #33).
     prompt_tokens_sent = count_message_tokens(messages)
 
     for idx, backend in enumerate(model.backends):
@@ -332,11 +317,8 @@ async def dispatch(
             continue
 
         for attempt in range(settings.max_retries + 1):
-            # The attempt span is driven manually (not `with`) because the body
-            # spans an `await` and can `continue`/`break`/`return` out of the loop.
-            # A `finally` closes it on *every* exit path - a leaked span here also
-            # leaks its OTel context token, and the next attempt's detach then
-            # raises "token created in a different Context".
+            # Driven manually, not `with`: the body can continue/break/return
+            # mid-await, and a leaked span leaks its OTel context token.
             attempt_span_cm = tracer.start_as_current_span("resilience.attempt") if tracer else None
             attempt_span = attempt_span_cm.__enter__() if attempt_span_cm is not None else None
             try:

@@ -149,9 +149,7 @@ def _instrument_fastapi(application: FastAPI) -> None:
 _instrument_fastapi(app)
 
 
-# --------------------------------------------------------------------------- #
 # Health + metrics
-# --------------------------------------------------------------------------- #
 
 
 @app.get("/healthz")
@@ -188,9 +186,7 @@ async def metrics() -> Response:
     return Response(content=metrics_text(), media_type=CONTENT_TYPE_LATEST)
 
 
-# --------------------------------------------------------------------------- #
 # OpenAI <-> ollama translation helpers
-# --------------------------------------------------------------------------- #
 
 
 def _options_from_openai(body: dict[str, Any]) -> dict[str, Any]:
@@ -391,9 +387,7 @@ def _mark_cancelled_span(span: Any | None, event: str) -> None:
         pass
 
 
-# --------------------------------------------------------------------------- #
 # OpenAI surface
-# --------------------------------------------------------------------------- #
 
 
 @app.get("/v1/models")
@@ -1231,9 +1225,7 @@ async def completions(request: Request) -> Response:
             span_cm.__exit__(None, None, None)
 
 
-# --------------------------------------------------------------------------- #
 # Container entrypoint
-# --------------------------------------------------------------------------- #
 
 
 def main() -> None:
@@ -1252,9 +1244,8 @@ def main() -> None:
     config.loglevel = settings.log_level.upper()
 
     log.info("serve.start", bind=config.bind[0])
-    # hypercorn types `serve` against its own narrow ASGIFramework protocol; a
-    # FastAPI app is a valid ASGI3 callable it accepts at runtime, so the
-    # mismatch is a stub-strictness false positive, not a real defect.
+    # hypercorn types `serve` against a narrow ASGIFramework protocol. FastAPI
+    # is a valid ASGI3 callable at runtime, so this is a stub false positive.
     asyncio.run(serve(app, config))  # type: ignore[arg-type]
 
 

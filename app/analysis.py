@@ -25,14 +25,12 @@ from typing import Any
 
 from .obs import InstrumentedAction, emit_instrumented_action, llm_truncation_avoided_total
 
-# Small per-message overhead approximating the chat template's role/delimiter
-# tokens. tiktoken's cl100k_base is a close-enough proxy for ollama's tokenizer
-# for budgeting; we reserve headroom rather than aim for an exact match.
+# Per-message overhead approximating the chat template's role/delimiter tokens.
+# Tokenizer-approximation rationale: docs/backend-catalog.md.
 _PER_MESSAGE_OVERHEAD = 4
 
-# The safe fraction of a model's num_ctx a prompt may fill before the guard
-# trims. The remaining 10% is reserved headroom for the response and the chat
-# template's framing tokens.
+# Safe fraction of num_ctx a prompt may fill before the guard trims.
+# The remaining 10% is headroom for the response and template framing.
 _SAFE_FRACTION = 0.9
 
 
@@ -163,9 +161,8 @@ def apply_context_budget(
 
     dropped = len(messages) - len(result)
     if dropped <= 0:
-        # A single live turn larger than the budget cannot be trimmed (we never
-        # drop the current question). We did not actually avoid truncation here -
-        # the model will cap it - so do not claim we did.
+        # One live turn over budget cannot be trimmed, and the model will cap
+        # it, so this is not an avoided truncation - do not claim one.
         return result, new_total, False
 
     emit_instrumented_action(
