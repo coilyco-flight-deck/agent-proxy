@@ -1,0 +1,76 @@
+# Publishes the immutable agent-proxy image to Forgejo OCI on every push to main
+# (agent-proxy#97), matching the build-publish lane used across the fleet.
+#
+# The gate job repeats the ci.yml checks on purpose: publish must depend on a
+# green gate inside its own workflow, because separate workflows do not wait for
+# one another. No deploy stage here - rollout stays driven from
+# coilyco-bridge/deploy per the source -> deploy layer invariant.
+
+name: build-publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: docker
+    container:
+      image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests (ward test)
+        run: ./scripts/test.sh
+      - name: Lint (ruff)
+        run: .venv/bin/ruff check .
+      - name: Format check (black)
+        run: .venv/bin/black --check .
+      - name: Types (mypy)
+        run: .venv/bin/mypy app
+      - name: Daemonless boot probe (ward boot-probe)
+        run: ./boot_probe.sh
+      - name: Import/build smoke (ward smoke)
+        run: ./test-fixes.sh
+      - name: Alert Telegram on main failure
+        if: ${{ failure() && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_RED_CHAT_ID }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.workflow }}
+          JOB: ${{ github.job }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          API_BASE: https://api.telegram.org
+        run: python3 scripts/telegram_alert.py
+
+  publish:
+    runs-on: deploy
+    needs: [gate]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish immutable image
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: bash scripts/publish-image.sh
+      - name: Alert Telegram on main failure
+        if: ${{ failure() && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_RED_CHAT_ID }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.workflow }}
+          JOB: ${{ github.job }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          API_BASE: https://api.telegram.org
+        run: python3 scripts/telegram_alert.py
