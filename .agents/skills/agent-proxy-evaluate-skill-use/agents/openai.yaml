@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Proxy Skill Use"
+  short_description: "Evaluate observed skill adoption and outcomes"
+  default_prompt: "Use $agent-proxy-evaluate-skill-use to review the observed skill selection and use evidence."

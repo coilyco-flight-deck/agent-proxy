@@ -12,13 +12,15 @@ Use the repository-owned helper for deterministic filtering and cross-view joins
 ward exec trajectory-query -- --help
 ward exec trajectory-query -- investigate --issue owner/repository#42
 ward exec trajectory-query -- harness-fit --harness codex --model logical/model
+ward exec trajectory-query -- skill-use --skill coding-python --role engineer
 ```
 
 `investigate` accepts exact repository, issue, workflow, and trajectory filters,
 then joins reliability, cost and latency, policy, evaluation, and dossier
 evidence by trajectory id. `harness-fit` filters the existing observational
 aggregate by harness or model. It does not add a time window or repository
-dimension that the underlying view does not contain.
+dimension that the underlying view does not contain. `skill-use` filters the
+skill aggregate by skill, role, harness, or model.
 
 The helper defaults to `PROXY_BASE_URL` or `http://127.0.0.1:8080`. It emits
 JSON on stdout, copies no response bodies into errors, and never mutates Agent
@@ -35,6 +37,12 @@ Versioned contracts cover:
 * **evaluation** - active labels, disagreement, supersession, and late evidence
 * **harness_fit** - comparative completion, retry, fallback, latency, and cost by
   harness and model
+* **skill_fit** - observed skill selection and use against completion, retry,
+  fallback, intervention, and evaluation evidence, by skill, role, harness, and
+  model. Selection and observed use are separate facts and are never merged. A
+  selected skill with no matching Ward observation keeps a row flagged
+  `selected_without_observed_use`, since absent evidence and evidence of absence
+  are different claims.
 
 Every trajectory row carries repository, issue, workflow, trace, and span joins.
 Trace ids join the durable evidence to OTLP and SigNoz. Those operational
