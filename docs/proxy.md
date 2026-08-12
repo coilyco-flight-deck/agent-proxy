@@ -6,373 +6,40 @@ the request path, the `app/` modules, configuration, how to run it, and how to
 prove the core `num_ctx` fix. The design is locked upstream and not re-argued
 here - see the source-of-truth pointers in the README.
 
-## Request path
+The walkthrough is split across the pages below so each stays inside the
+repository documentation caps. This page keeps the map and the anchors other
+documents already link to.
 
-A governed client sends an OpenAI-shaped request carrying a Deploy-owned
-`<namespace>/<alias>` key as `model`. The proxy:
+## Contents
 
-1. **resolves** the key against Deploy's mounted registry (`app/models.py`).
-   LiteLLM mode sends the configured alias. Direct rollback sends a supported
-   physical target and fails closed for an unsupported runtime. Backend context
-   metadata derives `num_ctx = min(context_length, ceiling) - headroom`.
-2. **guards the context budget** (`app/analysis.py`): counts prompt tokens and,
-   if the prompt exceeds `num_ctx - headroom`, trims the oldest non-system turns,
-   always keeping the system framing and the live turn. Increments
-   `llm_truncation_avoided_total` when it actually drops a turn.
-3. **enqueues** the job on a bounded `asyncio.Queue` and awaits its future
-   (`app/queue.py`). A full queue returns HTTP 429 (`llm_queue_depth`,
-   `llm_queue_rejected_total`). Cancelling the downstream request removes a
-   waiting job or cancels its active dispatch task so worker capacity is released
-   without starting another retry or fallback.
-4. a **worker** dispatches under the resilience policies (`app/resilience.py`):
-   walk the fallback chain, retry each live backend with backoff, and validate
-   every response. Transport errors trip a per-backend circuit breaker; a merely
-   bad generation is rerolled but does not.
-5. the **upstream client** (`app/upstream.py`) forwards to the backend's native
-   API. Ollama backends use `/api/chat` with `options.num_ctx` injected. OpenAI
-   backends like the llama-server gpt-oss target use `/v1/chat/completions`
-   without injection, then normalize their response back to the proxy's
-   canonical shape. Downstream disconnects cancel the in-flight httpx request
-   and close an active response stream while recording a bounded `cancelled`
-   outcome.
-6. the result is shaped back to the OpenAI schema (`app/main.py`). Reasoning-model
-   thought is surfaced as `reasoning_content`.
+- [Request path and endpoints](proxy-request-path.md)
+- [Trace correlation metadata](proxy-trace-correlation.md)
+- [Correlation header and metadata fields](proxy-correlation-fields.md)
+- [Model I/O capture contract](proxy-capture-contract.md)
+- [SigNoz content viewing contract](proxy-signoz-viewing.md)
+- [Capture projections](proxy-capture-projections.md)
+- [Response validation](proxy-validation.md)
+- [Configuration](proxy-configuration.md)
+- [Auto num_ctx and the NUM_PARALLEL coupling](proxy-num-ctx.md)
+- [Running, proving, and metrics](proxy-operations.md)
 
-Streaming requests take the same fallback chain and circuit breaker but skip the
-reroll (a token stream cannot be validated after the fact), so a harness that
-wants the full resilience guarantee uses the non-streaming path.
+## Moved sections
+
+The headings below are kept so links written before the split still resolve.
+Each one names the page that now holds the content.
 
 ## Trace correlation metadata
 
-Each request can carry ward run metadata in headers, with OpenAI `metadata` as a
-fallback when a client cannot set custom headers. The proxy copies the values
-into `RequestTraceContext.extra`, structured logs, and span attributes so
-SigNoz can join proxy traces with ward-run logs.
-
-Every structured log emitted while an OpenTelemetry span is active also carries
-the current lowercase hexadecimal `trace_id` and `span_id`. The ser8 SigNoz
-`json-body` ingest pipeline promotes those fields from the retained JSON body,
-which enables the traces-to-logs jump without duplicating log export in the
-request path. Logs outside a valid span omit both fields.
-
-Every handled request, stream, validation, transport, queue-worker, and
-trajectory-persistence failure records an OpenTelemetry `exception` event and
-marks its span as an error. The exception uses a static service-local type, a
-closed-set human summary as its message, and `error.type` plus `error.stage`
-attributes drawn from the bounded taxonomy in
-[exception-taxonomy.md](exception-taxonomy.md). Dynamic diagnostics remain outside the
-exception grouping event, giving the SigNoz Exceptions page complete baseline
-coverage without adding new body capture.
-
-`app.obs.record_error` is the single writer of that telemetry, so the event and
-the `StatusCode.ERROR` status can never drift apart. Failure is recorded at
-**attempt** granularity: a retried attempt and a dead backend each keep their own
-error span, while the attempt that recovers or serves the request is left clean.
-A transient blip therefore stays visible in Error Management without turning a
-request that ultimately succeeded into a false alert. `tests/test_error_spans.py`
-holds that contract for the non-streaming, streaming, retry-recovery,
-backend-fallback, and redaction paths.
-
-FastAPI instrumentation is installed while the application is assembled,
-before Starlette freezes its middleware stack. The HTTP server span extracts
-the caller's W3C `traceparent`, and `request.chat` or `request.completions`
-continues beneath it. HTTPX then carries that same context into LiteLLM. Body
-capture remains off unless `PROXY_TRACE_BODIES` is explicitly enabled. When it
-is enabled, the request span owns the strict complete request and response
-capture contract below.
-
-## Model I/O capture contract
-
-Body capture is opt-in and defaults off. When enabled, Agent Proxy captures
-every field in both the complete normalized request body and the complete
-normalized response body. This includes messages or prompts, tool definitions
-and calls, model-visible options, generated content, reasoning content, usage,
-and finish state when present. There is no selected-field or request-only
-capture mode. Transport credentials and hop-by-hop headers are not model I/O
-and remain excluded.
-
-Agent Proxy is the single capture owner. Upstream callers, including
-orchestration services such as Sirens Echo, keep correlation and operational
-metadata but do not duplicate model payloads in their logs. With capture off,
-stdout, OTLP spans, and SigNoz stay metadata-only. With capture on, body-bearing
-structured logs and trace attributes contain the complete request and response
-bodies. The configured OTLP or SigNoz sink must be governed as restricted model
-content accordingly.
-
-The repository enforces this condition for non-streaming chat, reconstructed
-streaming chat, text completions, and MCP prompt calls. The restricted ser8
-deployment opt-in and live SigNoz verification completed under
-[issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
+Moved to [proxy-trace-correlation.md](proxy-trace-correlation.md).
 
 ### SigNoz content viewing contract
 
-When capture is enabled, Agent Proxy emits exactly one structured request-body
-event and one structured response-body event for each boundary model call:
-
-* `model.request.captured` stores the complete normalized JSON object under
-  `request.body`.
-* `model.response.captured` stores the complete normalized JSON object under
-  `response.body`.
-
-Both events carry `agentproxy.capture.schema_version=1`,
-`agentproxy.capture.status`, `agentproxy.request_id`, `trace_id`, and `span_id`.
-Each event also carries a projection of the fields worth reading without
-parsing the whole body. `model.request.captured` carries
-`agentproxy.user_message`, the verbatim text of the final user turn.
-`model.response.captured` carries `agentproxy.finish_reason`,
-`agentproxy.assistant_message`, `agentproxy.completion_tokens`, and
-`agentproxy.prompt_tokens`, taken from the first choice and the usage block.
-
-A projection is a convenience beside the complete body, never a selected-field
-capture mode, and never a substitute for the body it sits next to. Every value
-is already inside `request.body` or `response.body`. They are lifted here
-because Agent Proxy is the one place that serves every capture consumer, and
-because the user message is otherwise unreachable: it is the last matching
-element of a variable-length messages list, and no log pipeline field path can
-address a last element.
-
-Projection is total. An absent, blank, or unreadable value omits its field
-rather than failing a capture that would otherwise have succeeded, so a request
-with no user turn and an incomplete response both still capture. A truncated
-completion is legible from the projection alone, as `agentproxy.finish_reason`
-of `length` with `agentproxy.completion_tokens` at the request's cap and no
-`agentproxy.assistant_message`. Adding these fields is backward compatible and
-does not advance the capture schema version.
-The `trace_id` and request-span `span_id` pair the two events even when one
-Sirens Echo turn makes multiple model calls. The request span also carries
-canonical JSON strings under `agentproxy.request.body` and
-`agentproxy.response.body` for direct span inspection.
-
-`agentproxy.capture.status` is `complete` when the whole normalized body is
-present. A failed, cancelled, or interrupted response emits
-`model.response.captured` with `agentproxy.capture.status=incomplete`, every
-response field available at the boundary, and a closed-set
-`agentproxy.capture.reason`. The reason is one of `cancelled`,
-`context_truncated`, `interrupted`, `queue_rejected`, `response_failed`,
-`stream_failed`, or `upstream_failed`.
-Streaming capture reconstructs the complete normalized response returned to the
-caller. When capture is disabled, none of these body events or attributes are
-emitted.
-
-Chat capture preserves every accepted request field and records the
-post-context-guard message list. Text completion capture preserves every field
-and records a list prompt in its normalized joined-string form. MCP prompt
-capture records the MCP tool arguments and the exact structured tool result,
-not a duplicate synthetic OpenAI boundary. Capture serializes canonical JSON
-before dispatch and before response delivery. Serialization, span attachment,
-or structured-log delivery failure raises a hard capture error rather than
-reporting a successful model response with incomplete evidence.
-
-SigNoz Logs is the primary content viewer because it retains the structured JSON
-objects. From the Agent Proxy `request.chat` or `request.completions` span, use
-the trace-to-logs action, restrict the results to the same `trace_id`, `span_id`,
-and `service.name=agent-proxy`, then open the two captured events and expand
-`request.body` or `response.body`. The span attribute panel provides the same
-canonical content for direct inspection.
-
-* `x-request-id` or `metadata.request_id` - `agentproxy.request_id`
-* `x-ward-run-id` or `metadata.ward.run_id` - `ward.run_id`
-* `x-ward-container-name` or `metadata.ward.container_name` - `ward.container_name`
-* `x-ward-role` or `metadata.ward.role` - `ward.role`
-* `x-ward-harness` or `metadata.ward.harness` - `ward.harness`
-* `x-ward-target-repo` or `metadata.ward.target_repo` - `ward.target_repo`
-* `x-ward-issue-ref` or `metadata.ward.issue_ref` - `ward.issue_ref`
-* `x-ward-workflow` or `metadata.ward.workflow` - `ward.workflow`
-* `x-ward-context-level` or `metadata.ward.context_level` - `ward.context_level`
-* `x-ward-version` or `metadata.ward.version` - `ward.version`
-* `x-agent-session-id` or `metadata.agent.session_id` - `agent.session_id`
-
-Prometheus labels stay unchanged. The new correlation fields live only in logs
-and traces.
-
-## Endpoints
-
-* `POST /v1/chat/completions` - streaming and non-streaming.
-* `POST /v1/completions` - modeled as a single user turn so it rides the same
-  resilience path.
-* `GET /v1/models` - lists enabled logical route keys and hides physical models.
-* `GET /healthz` - liveness for Caddy / k8s probes.
-* `GET /readyz/{namespace}/{alias}` - non-generating structural readiness for one
-  governed logical route. See [readiness.md](readiness.md).
-* `GET /metrics` - prometheus exposition.
+Moved to [proxy-signoz-viewing.md](proxy-signoz-viewing.md).
 
 ## Validation
 
-A response is *usable* when it is non-empty, any emitted tool call has parseable
-arguments, and it is not degenerate repetition. Every check keys off
-**structurally** broken output; none of them judge the meaning of the text. Two
-deliberate refinements, both surfaced by live testing against the tower:
-
-* a legitimately short word answer (`OK`, `42`, `no`) is **not** truncation
-  garbage - only a 1-3 char *non-word* reply (a stray symbol) is.
-* a reasoning model that emitted `thinking` but ran out of token budget before
-  final content did real work - it is surfaced as a length-limited response, not
-  rerolled into a 502.
+Moved to [proxy-validation.md](proxy-validation.md).
 
 ### Removed: the self-verification claim check
 
-An earlier check rejected first-person completion claims ("I have filed the
-issue") when the response carried no tool calls, on the theory that the router
-could kick the turn back rather than trust a hallucinated done-state. It was
-removed. It inferred intent from a regex over English, so a **correct** turn
-that merely narrated its work was rerolled through every retry and every backend
-in the chain and then returned a 502. A validator that rejects correct output
-costs more than the hallucination it was aimed at.
-
-The benchmark harness keeps an equivalent-looking `missed_toolcall` rule
-(`scripts/reliability_loop.py`). That one is sound because it is gated on
-`expect_tool`: the harness knows out-of-band that the turn required a tool call,
-which the proxy never does.
-
-The prompt-budget guard and the delivered-context check now both use the shared
-instrumentation wrapper. Prompt trimming emits a structured `request.prompt_trimmed`
-event, increments `llm_truncation_avoided_total`, and adds a span event with the
-trimmed token counts and drop count when tracing is active. Delivered-context
-truncation keeps the existing `dispatch.context_truncated` warning and metric,
-and records the same action through the wrapper so the log, metric, and span
-stay aligned.
-
-## Configuration
-
-All settings read from the environment with prefix `PROXY_` and fall back to AWS
-SSM for the tower FQDN and secrets (`app/config.py`). Nothing is hardcoded and no
-secret is committed. Key knobs:
-
-* `PROXY_TOWER_BASE_URL` - the primary ollama base URL. If unset, the tower FQDN
-  resolves from SSM `/coilysiren/kai-tower-3026/tailnet-fqdn` at boot. This is the
-  backend whose `/api/tags` is the catalog source of truth.
-* `PROXY_NUM_CTX_CEILING` - the VRAM-safe upper bound on the injected `num_ctx`
-  (default **49152**). A model advertising a huge window (`qwen3:4b` = 262144)
-  never allocates more KV cache than the tower can carry.
-* `PROXY_NUM_CTX_HEADROOM` - tokens reserved below the ceiling for the completion
-  (default **1024**).
-* `PROXY_OLLAMA_NUM_PARALLEL` - the backend's `OLLAMA_NUM_PARALLEL` (default **1**).
-  ollama divides an injected `num_ctx` across this many slots, so the proxy injects
-  `derived_num_ctx * num_parallel` to keep each request's window intact. Set it to
-  match the backend; a per-backend override rides in `PROXY_BACKENDS_JSON` as
-  `"num_parallel"`. See the coupling section below.
-* `PROXY_CONTEXT_TRUNCATION_TOLERANCE` - slack (default **0.15**) that absorbs
-  tokenizer drift in the fail-loud delivered-context check, so a prompt that merely
-  filled its window is never mistaken for a clip.
-* `PROXY_FAIL_ON_CONTEXT_TRUNCATION` - when set, a detected short-context delivery
-  502s loud instead of returning the marked short read (default **off**).
-* `PROXY_BACKENDS_JSON` / `PROXY_BACKENDS_FILE` - a JSON array of backend specs
-  (`{"name","url","dialect"?,"chat_path"?,"num_parallel"?,...}`) that supplies
-  transport endpoints separately from logical route data.
-* `PROXY_ROUTE_REGISTRY_FILE` - the Deploy-mounted logical route registry.
-* `PROXY_ROUTE_UPSTREAM_MODE` - `litellm` for aliases or `direct` for rollback.
-* `PROXY_ROUTE_REGISTRY_COMPATIBILITY_MODE` - permits the legacy physical tag
-  catalog only when no registry path is configured. Production disables it.
-* `PROXY_READINESS_TIMEOUT` - per-dependency timeout for non-generating route
-  readiness checks. The default is 3 seconds.
-* `PROXY_WORKER_COUNT`, `PROXY_QUEUE_MAXSIZE` - queue / worker sizing.
-* `PROXY_MAX_RETRIES`, `PROXY_CIRCUIT_FAIL_THRESHOLD`, `PROXY_CIRCUIT_COOLDOWN` -
-  resilience knobs.
-* `PROXY_SENTRY_DSN`, `PROXY_OTEL_EXPORTER_OTLP_ENDPOINT` - observability. Both
-  degrade to no-ops when unset.
-* `PROXY_TRACE_BODIES` - opt-in model I/O capture, defaulting to off. The
-  repository implementation captures every request and response body field when
-  enabled and fails hard on capture loss. The restricted ser8 deployment and
-  live verification completed under
-  [issue #77](https://forgejo.coilysiren.me/coilyco-flight-deck/agent-proxy/issues/77).
-* `PROXY_WARD_SKILL_USE_INPUT` - optional path to a ward reap archive directory
-  or a single `skill-usage.json` artifact. When set, the proxy ingests it at
-  startup, durably retains metadata-only trajectory observations, and increments
-  dashboard-friendly skill counts by skill and harness.
-* `PROXY_TRAJECTORY_REQUEST_EMISSION_ENABLED` - offers metadata-only request
-  action and terminal execution events to the bounded trajectory queue. It
-  defaults off until `PROXY_TRAJECTORY_DB_PATH` points at durable mounted
-  storage.
-
-### Auto num_ctx from the backend's real context window
-
-The proxy no longer guesses `num_ctx` from a hand-maintained table (issue #32).
-Ollama's `/api/tags` reports each model's real `context_length` in
-`details.context_length` (confirmed live: `qwen3:8b` = 40960, `qwen3:4b` =
-262144). The proxy reads it once (cached), and injects
-
-```
-num_ctx = min(context_length, PROXY_NUM_CTX_CEILING) - PROXY_NUM_CTX_HEADROOM
-```
-
-so a model rides its own real window up to the VRAM-safe ceiling. With the
-defaults (ceiling 49152, headroom 1024): `qwen3:8b` -> 39936, `qwen3:4b` ->
-48128. The **caller can never override `num_ctx`** - upstream forces the derived
-value even if a client sends its own - which is the whole point of the proxy.
-
-The larger litellm-as-core re-core that supersedes this routing layer entirely
-is tracked in `coilyco-bridge/agentic-os-hardware#25` and is compatible with this
-phase-1 change.
-
-### The OLLAMA_NUM_PARALLEL coupling (issue #33)
-
-The `num_ctx` the proxy injects is the model's **total** context. ollama then
-**divides it across `OLLAMA_NUM_PARALLEL` slots**, so a single request's usable
-window is `num_ctx / NUM_PARALLEL`. On a backend running `OLLAMA_NUM_PARALLEL=2`,
-an injected `num_ctx=49152` delivers only ~24576 tokens per request - the flagship
-fix silently halved, one layer down. Measured live (Windows tower, `qwen3:4b`,
-`OLLAMA_NUM_PARALLEL=2`): `num_ctx=49152 -> prompt_eval_count=24578`,
-`num_ctx=65536 -> 32770`, each exactly `num_ctx/2 + 2`.
-
-The proxy defends in depth:
-
-* **Compensate** - it injects `derived_num_ctx * num_parallel`
-  (`PROXY_OLLAMA_NUM_PARALLEL`, or per-backend `num_parallel`), so each slot still
-  delivers the intended per-request window. Note the VRAM cost: total KV cache
-  scales with `num_ctx * num_parallel`, so a >1-slot backend that keeps the full
-  window per request needs proportionally more VRAM - which is why the *real* fix
-  is pinning the backend to one slot.
-* **Fail loud** - after every ollama call it compares the backend's
-  `prompt_eval_count` against both the sent prompt size and the target window
-  (`app/analysis.detect_context_truncation`). A materially short delivery marks the
-  result (`finish_reason=length`), increments `llm_context_truncated_total`, and
-  logs `dispatch.context_truncated`; `PROXY_FAIL_ON_CONTEXT_TRUNCATION` makes it a
-  hard 502. This catches a misconfigured `num_parallel` - the compensation being
-  wrong - instead of reporting a silent short read as success.
-
-The deployment half - pinning `OLLAMA_NUM_PARALLEL=1` on the proxy's ollama
-backends so a slot gets the whole window - belongs in the ansible ollama role, not
-this repo.
-
-## Running and proving locally
-
-```
-ward exec sync                                             # uv sync (installs app + dev)
-PROXY_TOWER_BASE_URL=http://<tower>:11434 ward exec serve  # proxy on 127.0.0.1:8080
-ward exec test                                             # offline suite, tower not required
-
-# compatibility-mode proof with the proxy and tower reachable:
-TOWER=<tower> MODEL=qwen3-coder:30b ward exec proof        # 32767 (direct) vs num_ctx-injected (proxy)
-TOWER=<tower> MODEL=qwen3-coder:30b ward exec reliability -- --target both --turns 6 --json reliability.json
-```
-
-The invocation is `ward exec <verb>`, defined in `.ward/ward.yaml`. Bare
-`ward <verb>` also resolves (ward's unknown-verb fallback rewrites it to
-`ward exec <verb>`), but the explicit `exec` form is unambiguous and is what
-these docs use. Script arguments ride after a `--` so ward hands them to the
-verb rather than parsing them itself.
-
-`scripts/truncation_proof.py` reproduces the leg-01 truncation test through the
-proxy. `scripts/reliability_loop.py` is the leg-05 reliability harness: it scores
-a context-growing, tool-using loop with the proxy's own `validate_response` and
-emits a reliability percentage and failure histogram. `--target both` runs the
-`direct` baseline and the `proxy` after in one pass and prints the comparison;
-`--json PATH` writes a durable, machine-readable artifact (stable schema, no FQDN
-inside) so a future before/after check re-runs the same command and diffs the
-JSON. The measured result and its reproduction command live in
-`docs/reliability_baseline.md`. Both scripts resolve the tower via `TOWER` /
-`PROXY_TOWER_BASE_URL` / SSM and never write the FQDN into a file.
-
-## Metrics
-
-`llm_requests_total`, `llm_queue_depth`, `llm_queue_rejected_total`,
-`llm_retries_total`, `llm_fallbacks_total`, `llm_circuit_state`,
-`llm_truncation_avoided_total`, `llm_validation_failures_total`,
-`llm_context_truncated_total`, `llm_prompt_tokens`, `llm_upstream_latency_seconds`,
-`ward_skill_use_total`.
-
-## Out of scope here
-
-Deploy to kai-server (leg 09), the Caddy front selector and 2-replica manifests
-(leg 09), and the capability phases (tool injection, MCP credential passthrough,
-RAG, upskilling). This leg stays tightly the reliability proxy.
+Moved to [proxy-validation.md](proxy-validation.md).
