@@ -19,7 +19,7 @@ Status legend:
   aliases through LiteLLM, and fail closed when direct rollback cannot serve a runtime. See
   [route-registry.md](route-registry.md).
 - **Backend-derived context safety** - landed - safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
-- **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, response validation, self-verification checks, retry with backoff, fallback chains, and per-backend circuit breakers.
+- **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, structural response validation, retry with backoff, fallback chains, and per-backend circuit breakers. Validation rejects only structurally broken output (empty, unparsable tool arguments, truncation garbage, degenerate repetition); it does not judge the meaning of assistant text.
 - **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, closed-set SigNoz exception events for every handled runtime failure, Sentry initialization, request spans, and Ollama final-response token plus phase-duration measurements for streaming and non-streaming requests.
 - **Opt-in complete model I/O capture** - landed - complete normalized request
   and response bodies for non-streaming chat, reconstructed streaming chat,

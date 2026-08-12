@@ -48,7 +48,7 @@ viewing flow are defined in
 - Deploy-mounted logical route discovery with physical backend names kept
   behind the proxy boundary, plus backend-derived safe context handling.
 - A bounded in-memory worker queue, response validation, retry, fallback, and per-backend circuit breaking.
-- Context-budget protection and a small self-verification detector for unsupported action claims.
+- Context-budget protection and structural response validation that rejects broken output without judging the meaning of assistant text.
 - Structured logs, Prometheus metrics, OpenTelemetry traces, Sentry initialization, Ward correlation metadata, and metrics-only health endpoints.
 - Non-generating logical-route readiness that checks the LiteLLM and Ollama
   control surfaces without loading model weights or extending VRAM residency.

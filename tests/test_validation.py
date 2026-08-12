@@ -71,6 +71,15 @@ def test_normal_answer_accepted():
     assert ok and reason == "ok"
 
 
-def test_ungrounded_action_claim_is_rejected():
-    ok, reason = validate_response(_r("I have filed the issue and I will report back."))
-    assert not ok and reason == "ungrounded_action_claim"
+def test_narrated_action_without_tool_calls_accepted():
+    # Regression guard for the removed self-verification check. A turn that
+    # narrates completed work is not evidence of a hallucination, and rejecting
+    # it cost a full retry-and-fallback walk ending in a 502. Only the harness,
+    # which knows out-of-band that a tool call was required, may score this.
+    for text in (
+        "I have filed the issue and I will report back.",
+        "I've updated the config and pushed the branch.",
+        "I ran the tests; they pass.",
+    ):
+        ok, reason = validate_response(_r(text))
+        assert ok, f"{text!r} wrongly rejected as {reason}"

@@ -1,4 +1,4 @@
-"""Token counting, context budgeting, and self-verification helpers."""
+"""Token counting and context budgeting helpers."""
 
 from app import obs
 from app.analysis import (
@@ -7,7 +7,6 @@ from app.analysis import (
     count_tokens,
     detect_context_truncation,
     fit_to_budget,
-    verify_action_claim,
 )
 
 # --- delivered-context truncation discriminator (issue #33) ----------------- #
@@ -157,16 +156,3 @@ def test_single_oversized_turn_not_counted_as_avoided():
     msgs = [{"role": "user", "content": "word " * 5000}]
     out, total, trimmed = apply_context_budget("fast", msgs, num_ctx=500, headroom=50)
     assert out == msgs and not trimmed
-
-
-def test_ungrounded_action_claim_is_detected():
-    ok, reason = verify_action_claim("I have filed the issue and I am done.", tool_calls=None)
-    assert not ok and reason == "ungrounded_action_claim"
-
-
-def test_tool_evidence_grounds_the_claim():
-    ok, reason = verify_action_claim(
-        "I have filed the issue and I am done.",
-        tool_calls=[{"function": {"name": "create_issue", "arguments": {"title": "x"}}}],
-    )
-    assert ok and reason == "ok"

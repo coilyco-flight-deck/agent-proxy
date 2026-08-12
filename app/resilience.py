@@ -28,7 +28,7 @@ from enum import IntEnum
 from typing import Any, AsyncIterator
 
 from .config import get_settings
-from .analysis import count_message_tokens, detect_context_truncation, verify_action_claim
+from .analysis import count_message_tokens, detect_context_truncation
 from .models import Backend, LogicalModel, resolve
 from .obs import (
     InstrumentedAction,
@@ -143,9 +143,6 @@ def validate_response(result: UpstreamResult) -> tuple[bool, str]:
         return False, "empty"
     if has_tools and not _tool_calls_parse(result.tool_calls):
         return False, "malformed_toolcall"
-    ok, reason = verify_action_claim(result.content or "", result.tool_calls)
-    if not ok:
-        return False, reason
     # leg-01 truncation garbage is a 1-3 char *non-word* reply (a stray symbol,
     # punctuation, whitespace remnant). A short but real answer ("OK", "42",
     # "no") contains alphanumerics and is legitimate - never reroll that.

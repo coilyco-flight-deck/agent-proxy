@@ -146,7 +146,7 @@ The bounded in-memory queue and worker pool currently protect this repository's 
 
 ### `app/resilience.py` - migrate commodity behavior, retain Agent Proxy-specific detectors
 
-Retry, fallback, backend circuit-breaking, and provider dispatch migrate onto LiteLLM after parity. Response validation, delivered-context verification, self-verification checks, and policy-oriented structural detectors are Agent Proxy-specific behavior and remain on the hot path where justified.
+Retry, fallback, backend circuit-breaking, and provider dispatch migrate onto LiteLLM after parity. Response validation, delivered-context verification, and policy-oriented structural detectors are Agent Proxy-specific behavior and remain on the hot path where justified. Detectors stay structural: a hot-path check that infers intent from the meaning of assistant text is out of scope, having been retired once already (see [proxy.md](proxy.md#removed-the-self-verification-claim-check)).
 
 ### `app/analysis.py` - retain as Agent Proxy-specific behavior
 
