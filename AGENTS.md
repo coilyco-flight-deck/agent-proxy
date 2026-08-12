@@ -65,6 +65,15 @@ Do not claim an architecture-v2 component is landed until code and verification 
 - She/her for Kai in every artifact. No em dashes or semicolons in prose. Use bold anchors and flat bullets over prose tables.
 - Name the actor in action sentences.
 
+## Checkout residency
+
+This repo is not in Agent Compose's `repository-plan.yaml`, so it has no
+resident checkout under `~/projects/<owner>/`. That is intentional. Work it
+from a task-scoped temporary clone, and remove that clone once the work lands.
+
+A temporary root can be purged at any time, so commit and push before pausing,
+switching tasks, or ending a session. The remote is the only durable artifact.
+
 ## See also
 
 - [README.md](README.md) - human-facing intro and current charter.
