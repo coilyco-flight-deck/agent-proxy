@@ -47,9 +47,10 @@ or this file.
   within a couple of turns - the condition that produces silent truncation on
   the direct target.
 - **Scoring**: `app.resilience.validate_response` decides usable vs garbage
-  (empty, malformed tool call, hallucinated action claim, truncation garbage,
-  degenerate repetition), plus a harness-only `missed_toolcall` rule for a turn
-  that ignored the tool contract.
+  (empty, malformed tool call, truncation garbage, degenerate repetition), plus
+  a harness-only `missed_toolcall` rule for a turn that ignored the tool
+  contract. The harness rule is sound where the proxy-side one was not: the
+  harness knows out-of-band that the turn required a tool call.
 - **Targets**:
   - `direct` - tower `/v1` (`qwen3-coder:30b`), no `num_ctx` (the opencode/crush shape).
   - `proxy` - local proxy, same real tag (`qwen3-coder:30b`), derived `num_ctx`

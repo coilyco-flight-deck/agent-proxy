@@ -188,18 +188,30 @@ and traces.
 ## Validation
 
 A response is *usable* when it is non-empty, any emitted tool call has parseable
-arguments, it does not hallucinate an unsupported "I did the thing" claim, and
-it is not degenerate repetition. Three deliberate refinements, all surfaced by
-live testing against the tower:
+arguments, and it is not degenerate repetition. Every check keys off
+**structurally** broken output; none of them judge the meaning of the text. Two
+deliberate refinements, both surfaced by live testing against the tower:
 
 * a legitimately short word answer (`OK`, `42`, `no`) is **not** truncation
   garbage - only a 1-3 char *non-word* reply (a stray symbol) is.
-* a first-person completion claim like "I have filed the issue" is rejected if
-  the response has no tool evidence behind it, so the router can kick the turn
-  back instead of trusting a hallucinated done-state.
 * a reasoning model that emitted `thinking` but ran out of token budget before
   final content did real work - it is surfaced as a length-limited response, not
   rerolled into a 502.
+
+### Removed: the self-verification claim check
+
+An earlier check rejected first-person completion claims ("I have filed the
+issue") when the response carried no tool calls, on the theory that the router
+could kick the turn back rather than trust a hallucinated done-state. It was
+removed. It inferred intent from a regex over English, so a **correct** turn
+that merely narrated its work was rerolled through every retry and every backend
+in the chain and then returned a 502. A validator that rejects correct output
+costs more than the hallucination it was aimed at.
+
+The benchmark harness keeps an equivalent-looking `missed_toolcall` rule
+(`scripts/reliability_loop.py`). That one is sound because it is gated on
+`expect_tool`: the harness knows out-of-band that the turn required a tool call,
+which the proxy never does.
 
 The prompt-budget guard and the delivered-context check now both use the shared
 instrumentation wrapper. Prompt trimming emits a structured `request.prompt_trimmed`
