@@ -22,10 +22,8 @@ class Backend:
     api_key_file: str | None = None
     injects_num_ctx: bool = True
     timeout: float | None = None  # None -> use the global request_timeout.
-    # The backend's OLLAMA_NUM_PARALLEL (issue #33). ollama divides an injected
-    # num_ctx across this many slots, so the client multiplies the injected value
-    # by it to keep the per-request window intact. 1 means "backend serves one
-    # slot" (the intended, ansible-pinned deploy) and injection is unchanged.
+    # The backend's OLLAMA_NUM_PARALLEL (issue #33). 1 leaves injection
+    # unchanged. Scaling rationale: docs/context-safety-settings.md.
     num_parallel: int = 1
 
 
@@ -43,9 +41,7 @@ class LogicalModel:
         return self.backends[0]
 
 
-# --------------------------------------------------------------------------- #
 # num_ctx derivation
-# --------------------------------------------------------------------------- #
 
 
 def derive_num_ctx(context_length: int | None) -> int:
@@ -65,9 +61,7 @@ def derive_num_ctx(context_length: int | None) -> int:
     return max(base - headroom, 1)
 
 
-# --------------------------------------------------------------------------- #
 # Backend chain (tag-independent)
-# --------------------------------------------------------------------------- #
 
 
 def _backend_specs() -> list[dict[str, Any]]:
@@ -112,19 +106,8 @@ def _backends_for_model(upstream_model: str) -> list[Backend]:
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Catalog (/api/tags) cache
-# --------------------------------------------------------------------------- #
-#
-# ``/api/tags`` on the primary backend is the single source of truth for which
-# tags exist and each tag's real ``context_length``. It is read once per base URL
-# and cached; a value of ``None`` means "present but not reporting a context
-# length" so :func:`derive_num_ctx` falls back to the ceiling. The second return
-# element records whether the fetch succeeded, so an unreachable backend fails
-# *open* (a real request is served with a conservative window) rather than
-# turning every tag into a 404. Only *successful* reads are cached - a failed
-# fetch is retried on the next request, so a tower that comes up after the proxy
-# started is still discovered.
+# Catalog (/api/tags) cache. Read once per base URL, successful reads only.
+# Fail-open and re-fetch semantics: docs/backend-catalog.md.
 
 _catalog_cache: dict[str, dict[str, int | None]] = {}
 
@@ -201,9 +184,7 @@ def reset_catalog() -> None:
     _catalog_cache.clear()
 
 
-# --------------------------------------------------------------------------- #
 # Resolution surface
-# --------------------------------------------------------------------------- #
 
 
 async def resolve(tag: str) -> LogicalModel | None:

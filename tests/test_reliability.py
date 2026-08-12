@@ -34,9 +34,7 @@ def _payload(content: str = "", tool_calls: list | None = None) -> dict:
 _GOOD_TOOL_CALL = [{"function": {"name": "get_line_count", "arguments": "{}"}}]
 
 
-# --------------------------------------------------------------------------- #
 # score_payload - the pure scoring branch
-# --------------------------------------------------------------------------- #
 
 
 def test_score_plain_text_ok():
@@ -66,9 +64,7 @@ def test_score_malformed_toolcall():
     assert not ok and reason == "malformed_toolcall"
 
 
-# --------------------------------------------------------------------------- #
 # _score_turn - the HTTP error -> failure-reason mapping
-# --------------------------------------------------------------------------- #
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
@@ -99,9 +95,7 @@ def test_score_turn_scores_good_payload():
     assert ok and reason == "ok"
 
 
-# --------------------------------------------------------------------------- #
 # run - aggregation into reliability % + histogram
-# --------------------------------------------------------------------------- #
 
 
 def test_run_aggregates_reliability_and_histogram():
@@ -128,9 +122,7 @@ def test_run_zero_turns_is_zero_pct_not_crash():
     assert result["reliability_pct"] == 0.0 and result["turns"] == 0
 
 
-# --------------------------------------------------------------------------- #
 # build_artifact - the durable, reproducible report shape
-# --------------------------------------------------------------------------- #
 
 
 def test_build_artifact_shape():

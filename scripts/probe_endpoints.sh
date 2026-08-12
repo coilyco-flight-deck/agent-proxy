@@ -34,11 +34,8 @@ body=$(curl -fsS --max-time "$TIMEOUT" "${BASE_URL}/healthz") || fail "/healthz 
   || fail "/healthz body unexpected: $body"
 echo "  OK   /healthz -> $body"
 
-# 3. /v1/models is an OpenAI-shaped list. Its entries are now the tags the
-# backend actually serves (issue #32: live /api/tags, not a static alias list),
-# so a daemonless / tower-less boot correctly returns an empty data array. We
-# assert the list *shape* here, not a non-empty catalog, since this probe runs
-# with no backend reachable.
+# 3. /v1/models is an OpenAI-shaped list of live tags (issue #32). Assert the
+# shape only - a tower-less boot correctly returns an empty data array.
 models=$(curl -fsS --max-time "$TIMEOUT" "${BASE_URL}/v1/models") \
   || fail "/v1/models request failed"
 { echo "$models" | grep -q '"object"' && echo "$models" | grep -q '"data"'; } \

@@ -52,9 +52,8 @@ def test_repetition_rejected():
 
 
 def test_repeated_line_rejected():
-    # A whole multi-word line looped 50x is a stuck decoder - the per-token
-    # check misses it (the line carries several distinct words), so the
-    # line-level check must catch it.
+    # A multi-word line looped 50x is a stuck decoder the per-token check
+    # misses, so the line-level check must catch it.
     ok, reason = validate_response(_r("The quick brown fox jumps over it.\n" * 50))
     assert not ok and reason == "repetition"
 
@@ -72,10 +71,8 @@ def test_normal_answer_accepted():
 
 
 def test_narrated_action_without_tool_calls_accepted():
-    # Regression guard for the removed self-verification check. A turn that
-    # narrates completed work is not evidence of a hallucination, and rejecting
-    # it cost a full retry-and-fallback walk ending in a 502. Only the harness,
-    # which knows out-of-band that a tool call was required, may score this.
+    # Regression guard for the removed self-verification check (#91): narrating
+    # completed work is not evidence of a hallucination.
     for text in (
         "I have filed the issue and I will report back.",
         "I've updated the config and pushed the branch.",

@@ -9,11 +9,8 @@ from app.analysis import (
     fit_to_budget,
 )
 
-# --- delivered-context truncation discriminator (issue #33) ----------------- #
-#
-# The live evidence: qwen3:4b on a NUM_PARALLEL=2 backend, ~100k-token prompt,
-# injected num_ctx halved to a per-request window. The proxy asks for `target`
-# and the backend delivers `target / NUM_PARALLEL`.
+# Delivered-context truncation discriminator (issue #33). Live evidence:
+# qwen3:4b on a NUM_PARALLEL=2 backend delivered `target / NUM_PARALLEL`.
 
 
 def test_detect_flags_the_halved_window():

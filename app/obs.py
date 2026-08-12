@@ -24,9 +24,7 @@ from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 from .config import get_settings
 
-# --------------------------------------------------------------------------- #
 # Prometheus metrics - the leg 04 names plus request-level counters.
-# --------------------------------------------------------------------------- #
 
 llm_requests_total = Counter(
     "llm_requests_total", "Requests accepted by the proxy", ["logical_model", "outcome"]

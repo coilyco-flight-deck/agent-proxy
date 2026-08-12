@@ -135,6 +135,12 @@ with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
   route contract, startup behavior, and direct rollback.
 - [`docs/readiness.md`](docs/readiness.md) defines liveness, structural route
   readiness, inference evidence, and the no-log health contract.
+- [`docs/context-safety-settings.md`](docs/context-safety-settings.md) explains
+  why the `num_ctx` settings hold the values they do.
+- [`docs/backend-catalog.md`](docs/backend-catalog.md) explains catalog caching,
+  fail-open discovery, and prompt measurement.
+- [`docs/ward-verbs.md`](docs/ward-verbs.md) records per-verb rationale and the
+  tower or daemon each verb needs.
 - [`docs/work-graph.md`](docs/work-graph.md) links the new dependency-ordered implementation issues.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) explains sequencing without treating future capabilities as prohibited work.
 
