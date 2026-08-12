@@ -135,6 +135,8 @@ with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
   route contract, startup behavior, and direct rollback.
 - [`docs/readiness.md`](docs/readiness.md) defines liveness, structural route
   readiness, inference evidence, and the no-log health contract.
+- [`docs/image-publishing.md`](docs/image-publishing.md) defines the build and
+  publish lane, the immutable tag, and the deploy boundary.
 - [`docs/context-safety-settings.md`](docs/context-safety-settings.md) explains
   why the `num_ctx` settings hold the values they do.
 - [`docs/backend-catalog.md`](docs/backend-catalog.md) explains catalog caching,
