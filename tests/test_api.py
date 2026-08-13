@@ -1132,3 +1132,55 @@ def test_stream_capture_records_partial_response_on_failure(client, monkeypatch,
     assert events[1]["agentproxy.capture.status"] == "incomplete"
     assert events[1]["agentproxy.capture.reason"] == "stream_failed"
     assert events[1]["response.body"]["choices"][0]["message"]["content"] == "partial"
+
+
+def test_upstream_rejection_reaches_the_caller_as_itself(client, monkeypatch):
+    """Issue #114: a 400 is not a 502, and the upstream body is the useful part."""
+
+    async def rejects(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        raise upstream.UpstreamStatusError(
+            "litellm: Client error '400 Bad Request'",
+            status_code=400,
+            body=json.dumps(
+                {
+                    "error": {
+                        "message": (
+                            "Messages with role 'tool' must be a response to a "
+                            "preceding message with 'tool_calls'"
+                        ),
+                        "type": "invalid_request_error",
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr(upstream, "chat", rejects)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert "must be a response to a preceding message" in error["message"]
+    assert error["upstream_status"] == 400
+    # The old behaviour pointed the operator at capacity for a payload defect.
+    assert "all backends failed" not in response.text
+
+
+def test_upstream_server_error_is_still_a_backend_failure(client, monkeypatch):
+    async def unavailable(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        raise upstream.UpstreamStatusError("litellm: Server error '503'", status_code=503, body="")
+
+    monkeypatch.setattr(upstream, "chat", unavailable)
+    monkeypatch.setattr(resilience.get_settings(), "retry_base_delay", 0.0, raising=False)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["type"] == "upstream_error"

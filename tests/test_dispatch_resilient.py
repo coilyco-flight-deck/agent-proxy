@@ -17,8 +17,8 @@ import pytest
 from app import resilience, upstream
 from app.models import Backend, LogicalModel
 from app.obs import llm_fallbacks_total, llm_retries_total
-from app.resilience import AllBackendsFailed, UnknownModel
-from app.upstream import UpstreamError, UpstreamResult
+from app.resilience import AllBackendsFailed, BackendUnavailable, UnknownModel
+from app.upstream import UpstreamError, UpstreamResult, UpstreamStatusError
 
 
 def _good(content: str = "ok") -> UpstreamResult:
@@ -87,7 +87,26 @@ async def test_always_fails_surfaces_clean_error(monkeypatch):
 
     monkeypatch.setattr(upstream, "chat", dead)
 
-    with pytest.raises(AllBackendsFailed):
+    # One backend was attempted, so the error says so rather than claiming a
+    # chain-wide outage (issue #114).
+    with pytest.raises(BackendUnavailable) as caught:
+        await resilience.dispatch_resilient(model.name, [{"role": "user", "content": "hi"}])
+    assert not isinstance(caught.value, AllBackendsFailed)
+    assert "b-dead" in str(caught.value)
+
+
+async def test_all_backends_failed_names_a_real_chain(monkeypatch):
+    primary = Backend(name="b-primary", url="http://x", ollama_tag="t")
+    secondary = Backend(name="b-secondary", url="http://y", ollama_tag="t")
+    model = LogicalModel("qwen3:32b", 4096, [primary, secondary])
+    _install_resolve(monkeypatch, model)
+
+    async def dead(*args, **kwargs):
+        raise UpstreamError("backend down")
+
+    monkeypatch.setattr(upstream, "chat", dead)
+
+    with pytest.raises(AllBackendsFailed, match="all 2 backends failed"):
         await resilience.dispatch_resilient(model.name, [{"role": "user", "content": "hi"}])
 
 
@@ -117,3 +136,96 @@ async def test_unknown_tag_raises(monkeypatch):
 
     with pytest.raises(UnknownModel):
         await resilience.dispatch_resilient("does-not-exist", [])
+
+
+# Upstream status classification (issue #114). The trace: one 400, three
+# identical attempts, and a 502 naming a backend that was serving other traffic.
+
+
+def _status_error(status: int, body: str = "") -> UpstreamStatusError:
+    return UpstreamStatusError(f"litellm: Client error '{status}'", status_code=status, body=body)
+
+
+async def test_settled_4xx_is_not_retried(monkeypatch):
+    backend = Backend(name="litellm", url="http://x", ollama_tag="t")
+    model = LogicalModel("sirens-echo/deepseek", 4096, [backend])
+    _install_resolve(monkeypatch, model)
+    calls = {"n": 0}
+
+    async def rejects(*args, **kwargs):
+        calls["n"] += 1
+        raise _status_error(400, '{"error":{"message":"bad tool pairing"}}')
+
+    monkeypatch.setattr(upstream, "chat", rejects)
+    monkeypatch.setattr(resilience.get_settings(), "max_retries", 2, raising=False)
+
+    with pytest.raises(resilience.UpstreamRequestRejected) as caught:
+        await resilience.dispatch_resilient(model.name, [{"role": "user", "content": "hi"}])
+
+    # The body is byte-identical between attempts, so attempts 1 and 2 were
+    # guaranteed to fail before they were sent.
+    assert calls["n"] == 1
+    assert caught.value.status_code == 400
+    assert "bad tool pairing" in caught.value.body
+
+
+async def test_settled_4xx_does_not_walk_the_fallback_chain(monkeypatch):
+    primary = Backend(name="litellm", url="http://x", ollama_tag="t")
+    secondary = Backend(name="tower", url="http://y", ollama_tag="t")
+    model = LogicalModel("sirens-echo/deepseek", 4096, [primary, secondary])
+    _install_resolve(monkeypatch, model)
+    seen: list[str] = []
+
+    async def rejects(be, *args, **kwargs):
+        seen.append(be.name)
+        raise _status_error(400)
+
+    monkeypatch.setattr(upstream, "chat", rejects)
+
+    with pytest.raises(resilience.UpstreamRequestRejected):
+        await resilience.dispatch_resilient(model.name, [{"role": "user", "content": "hi"}])
+
+    # Asking a second backend the same invalid question cannot help.
+    assert seen == ["litellm"]
+
+
+async def test_settled_4xx_leaves_the_breaker_closed(monkeypatch):
+    backend = Backend(name="litellm-breaker", url="http://x", ollama_tag="t")
+    model = LogicalModel("sirens-echo/deepseek", 4096, [backend])
+    _install_resolve(monkeypatch, model)
+
+    async def rejects(*args, **kwargs):
+        raise _status_error(400)
+
+    monkeypatch.setattr(upstream, "chat", rejects)
+    monkeypatch.setattr(resilience.get_settings(), "circuit_fail_threshold", 2, raising=False)
+
+    for _ in range(4):
+        with pytest.raises(resilience.UpstreamRequestRejected):
+            await resilience.dispatch_resilient(model.name, [{"role": "user", "content": "hi"}])
+
+    # The backend answered promptly every time. It is not the broken thing.
+    assert resilience.breakers.allow(backend)
+
+
+@pytest.mark.parametrize("status", [408, 425, 429, 500, 502, 503])
+async def test_retryable_statuses_still_retry(monkeypatch, status):
+    backend = Backend(name=f"retry-{status}", url="http://x", ollama_tag="t")
+    model = LogicalModel(f"retryable-{status}", 4096, [backend])
+    _install_resolve(monkeypatch, model)
+    calls = {"n": 0}
+
+    async def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _status_error(status)
+        return _good("recovered")
+
+    monkeypatch.setattr(upstream, "chat", flaky)
+    monkeypatch.setattr(resilience.get_settings(), "max_retries", 2, raising=False)
+    monkeypatch.setattr(resilience.get_settings(), "retry_base_delay", 0.0, raising=False)
+
+    result = await resilience.dispatch_resilient(model.name, [{"role": "user", "content": "hi"}])
+
+    assert result.content == "recovered"
+    assert calls["n"] == 2

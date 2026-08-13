@@ -372,6 +372,8 @@ ERROR_TAXONOMY: dict[str, tuple[str, str]] = {
     "model_unavailable": ("request", "Requested logical route is disabled"),
     "rate_limit_error": ("request", "Request rejected by queue backpressure"),
     "upstream_error": ("upstream", "All backends failed for the request"),
+    "upstream_5xx": ("upstream", "Upstream backend returned a server error"),
+    "upstream_request_rejected": ("upstream", "Upstream rejected the request as invalid"),
 }
 
 # Fallback for a code outside the table. Unknown codes must never widen

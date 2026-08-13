@@ -24,7 +24,9 @@ A governed client sends an OpenAI-shaped request carrying a Deploy-owned
 4. a **worker** dispatches under the resilience policies (`app/resilience.py`):
    walk the fallback chain, retry each live backend with backoff, and validate
    every response. Transport errors trip a per-backend circuit breaker; a merely
-   bad generation is rerolled but does not.
+   bad generation is rerolled but does not. A settled upstream 4xx is neither
+   retried nor failed over and reaches the caller with its own status - see
+   [upstream error classification](upstream-error-classification.md).
 5. the **upstream client** (`app/upstream.py`) forwards to the backend's native
    API. Ollama backends use `/api/chat` with `options.num_ctx` injected. OpenAI
    backends like the llama-server gpt-oss target use `/v1/chat/completions`

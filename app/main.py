@@ -48,7 +48,7 @@ from .obs import (
 )
 from .readiness import UnknownRoute, check_route_readiness
 from .queue import QueueBusy, get_queue
-from .resilience import AllBackendsFailed, ContextTruncated
+from .resilience import BackendUnavailable, ContextTruncated, UpstreamRequestRejected
 from .route_registry import initialize_route_registry
 from .trajectory.api import router as trajectory_router
 from .trajectory.request_events import RequestLifecycle, RequestOutcome
@@ -321,6 +321,28 @@ def _error_body(message: str, err_type: str) -> dict[str, Any]:
 def _error(status: int, message: str, err_type: str) -> JSONResponse:
     record_error(err_type)
     return JSONResponse(status_code=status, content=_error_body(message, err_type))
+
+
+def _upstream_rejection_body(exc: UpstreamRequestRejected) -> dict[str, Any]:
+    """Pass the upstream's own verdict through instead of synthesizing a 502.
+
+    The caller needs to know its request was refused, not that a backend was
+    unavailable - issue #114 recorded an operator being pointed at capacity for
+    a defect in the payload. The upstream body rides along when it parses as the
+    OpenAI error shape, because that is the part that names what was wrong.
+    """
+    record_error("upstream_request_rejected")
+    try:
+        parsed = json.loads(exc.body)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
+        return {"error": {**parsed["error"], "upstream_status": exc.status_code}}
+    body: dict[str, Any] = {"message": str(exc), "type": "invalid_request_error"}
+    if exc.body:
+        body["upstream_body"] = exc.body
+    body["upstream_status"] = exc.status_code
+    return {"error": body}
 
 
 def _emit_capture_request(capture: ModelBodyCapture, span: Any | None) -> None:
@@ -670,7 +692,18 @@ async def _stream_chat(
                 if span_cm is not None:
                     span_cm.__exit__(None, None, None)
             raise
-        except AllBackendsFailed as exc:
+        except UpstreamRequestRejected as exc:
+            record_error("upstream_request_rejected", terminal_span)
+            log.warning(
+                "stream.request_rejected",
+                **trace_ctx.attrs(),
+                error=str(exc),
+                outcome="request-rejected",
+                upstream_status=exc.status_code,
+            )
+            finish = "stop"
+            outcome = "request-rejected"
+        except BackendUnavailable as exc:
             record_error("stream_failed", terminal_span)
             log.warning("stream.failed", **trace_ctx.attrs(), error=str(exc), outcome="failed")
             finish = "stop"
@@ -936,7 +969,28 @@ async def _chat_completions(
                 error=str(exc),
             )
             return _error(502, str(exc), "context_truncated")
-        except AllBackendsFailed as exc:
+        except UpstreamRequestRejected as exc:
+            error_body = _upstream_rejection_body(exc)
+            _emit_request_terminal(lifecycle, "upstream_rejected", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="request_rejected").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                error_body,
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="request-rejected",
+                upstream_status=exc.status_code,
+                error=str(exc),
+            )
+            return JSONResponse(status_code=exc.status_code, content=error_body)
+        except BackendUnavailable as exc:
             error_body = _error_body(str(exc), "upstream_error")
             _emit_request_terminal(lifecycle, "upstream_failed", started=started)
             llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()
@@ -1224,7 +1278,28 @@ async def completions(request: Request) -> Response:
                 error=str(exc),
             )
             return _error(502, str(exc), "context_truncated")
-        except AllBackendsFailed as exc:
+        except UpstreamRequestRejected as exc:
+            error_body = _upstream_rejection_body(exc)
+            _emit_request_terminal(lifecycle, "upstream_rejected", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="request_rejected").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                error_body,
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="request-rejected",
+                upstream_status=exc.status_code,
+                error=str(exc),
+            )
+            return JSONResponse(status_code=exc.status_code, content=error_body)
+        except BackendUnavailable as exc:
             error_body = _error_body(str(exc), "upstream_error")
             _emit_request_terminal(lifecycle, "upstream_failed", started=started)
             llm_requests_total.labels(logical_model=model.name, outcome="failed").inc()

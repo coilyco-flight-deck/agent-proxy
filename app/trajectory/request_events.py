@@ -16,6 +16,9 @@ RequestOutcome = Literal[
     "queue_rejected",
     "context_truncated",
     "upstream_failed",
+    # The upstream answered and refused the request itself (issue #114). Kept
+    # apart from upstream_failed, which means the backend could not serve.
+    "upstream_rejected",
     "stream_failed",
     "cancelled",
 ]

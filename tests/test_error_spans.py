@@ -86,7 +86,7 @@ def test_nonstreaming_transport_failure_marks_attempt_span_error(traced, monkeyp
     monkeypatch.setattr(upstream, "chat", always_fails)
     monkeypatch.setattr(resilience.get_settings(), "max_retries", 1, raising=False)
 
-    with pytest.raises(resilience.AllBackendsFailed):
+    with pytest.raises(resilience.BackendUnavailable):
         asyncio.run(resilience.dispatch(_model(), _messages()))
 
     errored = _error_spans(traced)
@@ -106,7 +106,7 @@ def test_validation_failure_marks_attempt_span_error(traced, monkeypatch):
     monkeypatch.setattr(upstream, "chat", returns_empty)
     monkeypatch.setattr(resilience.get_settings(), "max_retries", 0, raising=False)
 
-    with pytest.raises(resilience.AllBackendsFailed):
+    with pytest.raises(resilience.BackendUnavailable):
         asyncio.run(resilience.dispatch(_model(), _messages()))
 
     errored = _error_spans(traced)
@@ -242,7 +242,7 @@ def test_exception_fields_carry_no_request_content(traced, monkeypatch):
     monkeypatch.setattr(resilience.get_settings(), "max_retries", 0, raising=False)
 
     messages = [{"role": "user", "content": f"my key is {secret}"}]
-    with pytest.raises(resilience.AllBackendsFailed):
+    with pytest.raises(resilience.BackendUnavailable):
         asyncio.run(resilience.dispatch(_model(), messages))
 
     for span in traced.get_finished_spans():
