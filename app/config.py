@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     queue_maxsize: int = Field(default=100)
     worker_count: int = Field(default=4)
 
+    # Admission rate per logical route, sustained (#110). 0 disables shedding.
+    # Burst semantics: docs/rate-limits.md.
+    rate_limit_per_second: float = Field(default=1.0, ge=0.0)
+    rate_limit_burst: int = Field(default=1, ge=1)
+
     # Resilience knobs (leg 04 step 4).
     max_retries: int = Field(default=2, description="Retries per backend before falling back")
     retry_base_delay: float = Field(default=0.5, description="Backoff base seconds")

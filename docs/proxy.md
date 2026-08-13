@@ -21,6 +21,7 @@ documents already link to.
 - [Response validation](proxy-validation.md)
 - [Prompt cache accounting](proxy-prompt-cache.md)
 - [Configuration](proxy-configuration.md)
+- [Admission rate limits](rate-limits.md)
 - [Auto num_ctx and the NUM_PARALLEL coupling](proxy-num-ctx.md)
 - [Running, proving, and metrics](proxy-operations.md)
 

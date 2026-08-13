@@ -46,6 +46,7 @@ from .obs import (
     record_error,
     record_prompt_cache_usage,
 )
+from .ratelimit import get_rate_limiter
 from .readiness import UnknownRoute, check_route_readiness
 from .queue import QueueBusy, get_queue
 from .resilience import AllBackendsFailed, ContextTruncated
@@ -312,6 +313,28 @@ def _chat_completion_response(model_name: str, result: upstream.UpstreamResult) 
         "choices": [{"index": 0, "message": message, "finish_reason": _finish_reason(result)}],
         "usage": _usage_block(result),
     }
+
+
+def _rate_limited(logical_model: str) -> JSONResponse | None:
+    """Shed a request that arrived above the configured rate (issue #110).
+
+    Checked after route resolution so an unknown model still 404s rather than
+    spending a token, and before admission so a shed request never occupies the
+    queue it was shed to protect.
+    """
+    allowed, retry_after = get_rate_limiter().allow(logical_model)
+    if allowed:
+        return None
+    llm_requests_total.labels(logical_model=logical_model, outcome="rate_limited").inc()
+    record_error("rate_limited")
+    response = JSONResponse(
+        status_code=429,
+        content=_error_body(
+            "request rate exceeded for this route, retry shortly", "rate_limit_error"
+        ),
+    )
+    response.headers["Retry-After"] = str(max(int(retry_after + 0.999), 1))
+    return response
 
 
 def _error_body(message: str, err_type: str) -> dict[str, Any]:
@@ -804,6 +827,8 @@ async def _chat_completions(
         return _error(503, str(exc), "model_unavailable")
     if model is None:
         return _error(404, f"unknown model '{requested_model}'", "model_not_found")
+    if shed := _rate_limited(model.name):
+        return shed
     llm_route_requests_total.labels(
         logical_model=model.name,
         upstream_mode=model.upstream_mode,
@@ -1107,6 +1132,8 @@ async def completions(request: Request) -> Response:
         return _error(503, str(exc), "model_unavailable")
     if model is None:
         return _error(404, f"unknown model '{requested_model}'", "model_not_found")
+    if shed := _rate_limited(model.name):
+        return shed
     llm_route_requests_total.labels(
         logical_model=model.name,
         upstream_mode=model.upstream_mode,

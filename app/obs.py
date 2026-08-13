@@ -38,6 +38,11 @@ llm_queue_depth = Gauge("llm_queue_depth", "Jobs currently waiting in the in-mem
 llm_queue_rejected_total = Counter(
     "llm_queue_rejected_total", "Requests rejected with 429 because the queue was full"
 )
+llm_rate_limited_total = Counter(
+    "llm_rate_limited_total",
+    "Requests shed with 429 for exceeding the configured admission rate (issue #110)",
+    ["logical_model"],
+)
 llm_retries_total = Counter(
     "llm_retries_total", "Dispatch retries against a single backend", ["logical_model", "backend"]
 )
@@ -371,6 +376,7 @@ ERROR_TAXONOMY: dict[str, tuple[str, str]] = {
     "model_not_found": ("request", "Requested logical route is unknown"),
     "model_unavailable": ("request", "Requested logical route is disabled"),
     "rate_limit_error": ("request", "Request rejected by queue backpressure"),
+    "rate_limited": ("request", "Request shed for exceeding the admission rate"),
     "upstream_error": ("upstream", "All backends failed for the request"),
 }
 
