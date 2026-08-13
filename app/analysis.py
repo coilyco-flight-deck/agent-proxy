@@ -205,6 +205,7 @@ def apply_context_budget(
     messages: list[dict[str, Any]],
     num_ctx: int,
     headroom: int,
+    bound_by: str = "",
 ) -> tuple[list[dict[str, Any]], int, bool]:
     """Trim oldest non-system turns until the prompt fits ``num_ctx - headroom``.
 
@@ -218,9 +219,17 @@ def apply_context_budget(
     returned. A list that cannot be made valid raises
     :class:`PromptPairingError` rather than travelling to the backend as an
     opaque 400 (issue #113).
+
+    A ``num_ctx`` of 0 means the route has no locally-derived bound - a hosted
+    provider owns its own window and is the authority on it (issue #115) - so
+    nothing is trimmed. ``bound_by`` names which bound produced ``num_ctx`` and
+    rides the trim event, because a trim log that does not say what bound the
+    request cannot distinguish a VRAM limit from a cost ceiling.
     """
-    budget = max(num_ctx - headroom, 1)
     total = count_message_tokens(messages)
+    if num_ctx <= 0:
+        return messages, total, False
+    budget = max(num_ctx - headroom, 1)
     if total <= budget:
         return messages, total, False
 
@@ -268,6 +277,7 @@ def apply_context_budget(
                 "target_num_ctx": num_ctx,
                 "headroom_tokens": headroom,
                 "dropped_message_count": dropped,
+                **({"budget_bound_by": bound_by} if bound_by else {}),
             },
         )
     )

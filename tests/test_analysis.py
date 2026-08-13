@@ -280,3 +280,36 @@ def test_pairing_check_accepts_a_well_formed_prompt():
 def test_pairing_check_rejects_a_reply_with_no_call():
     reason = unpaired_tool_message([{"role": "tool", "content": "orphan"}])
     assert "no preceding tool call" in reason
+
+
+def test_no_local_bound_never_trims():
+    """Issue #115: a hosted route with no declared window is the provider's call."""
+    msgs = [
+        {"role": "user", "content": "word " * 5000},
+        {"role": "user", "content": "word " * 5000},
+    ]
+    out, total, trimmed = apply_context_budget("hosted", msgs, num_ctx=0, headroom=1024)
+    assert out == msgs and not trimmed and total > 0
+
+
+def test_trim_event_names_the_bound(monkeypatch):
+    events = []
+
+    class Span:
+        def is_recording(self):
+            return True
+
+        def add_event(self, name, attrs):
+            events.append((name, attrs))
+
+        def set_attribute(self, key, value):
+            return None
+
+    monkeypatch.setattr("app.obs._current_span", lambda: Span())
+    msgs = [
+        {"role": "user", "content": "word " * 500},
+        {"role": "user", "content": "the live question"},
+    ]
+    apply_context_budget("hosted", msgs, num_ctx=200, headroom=50, bound_by="cost_ceiling")
+
+    assert events[0][1]["budget_bound_by"] == "cost_ceiling"

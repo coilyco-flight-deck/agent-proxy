@@ -268,3 +268,146 @@ async def test_caller_cannot_override_derived_num_ctx(monkeypatch):
     # Even a caller passing their own num_ctx cannot defeat the derived ceiling.
     await upstream.chat(model.primary, model.num_ctx, messages=[], options={"num_ctx": 999999})
     assert fake.last_body["options"]["num_ctx"] == 39936
+
+
+# --- per-model context budget (issue #115) ---------------------------------- #
+
+
+def _hosted_registry(context_window: int | None = None) -> RouteRegistry:
+    """A route with no direct target: a hosted provider serves it."""
+    route = Route(
+        key="sirens-echo/deepseek",
+        upstream_alias="sirens-echo/deepseek",
+        direct=None,
+        context_window=context_window,
+    )
+    return RouteRegistry(routes={route.key: route}, source={})
+
+
+def _litellm_settings(monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "route_upstream_mode", "litellm")
+    monkeypatch.setattr(
+        settings,
+        "backends_json",
+        json.dumps([{"name": "litellm", "url": "http://litellm:4000", "dialect": "openai"}]),
+    )
+    return settings
+
+
+def test_derive_leaves_a_hosted_route_unbounded_without_a_declared_window():
+    # The VRAM ceiling is a tower fact. A provider with no VRAM to run out of
+    # gets no locally-invented limit, and 47104 stops being enforced.
+    assert models.derive_context_budget(None, local=False) == (0, models.BOUND_BY_UNBOUNDED)
+
+
+def test_derive_uses_a_hosted_route_declared_window():
+    budget, bound_by = models.derive_context_budget(1_000_000, local=False)
+    assert budget == 1_000_000 - HEADROOM
+    assert bound_by == models.BOUND_BY_MODEL_WINDOW
+
+
+def test_derive_still_caps_a_local_route_at_the_vram_ceiling():
+    assert models.derive_context_budget(262144, local=True) == (
+        CEILING - HEADROOM,
+        models.BOUND_BY_VRAM_CEILING,
+    )
+
+
+def test_derive_names_a_cost_ceiling_as_such(monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "context_cost_ceiling", 32768)
+    # Below the model's own window, so the operator's cost decision binds - and
+    # the log says so rather than calling it a VRAM number.
+    assert models.derive_context_budget(1_000_000, local=False) == (
+        32768 - HEADROOM,
+        models.BOUND_BY_COST_CEILING,
+    )
+    assert models.derive_context_budget(None, local=False) == (
+        32768 - HEADROOM,
+        models.BOUND_BY_COST_CEILING,
+    )
+
+
+def test_derive_ignores_a_cost_ceiling_above_the_window(monkeypatch):
+    settings = models.get_settings()
+    monkeypatch.setattr(settings, "context_cost_ceiling", 200_000)
+    assert models.derive_context_budget(40960, local=True) == (
+        40960 - HEADROOM,
+        models.BOUND_BY_MODEL_WINDOW,
+    )
+
+
+async def test_hosted_route_is_not_bounded_by_the_tower_ceiling(monkeypatch):
+    _litellm_settings(monkeypatch)
+    monkeypatch.setattr(models, "get_route_registry", _hosted_registry)
+
+    model = await models.resolve("sirens-echo/deepseek")
+
+    # This is the defect: it used to resolve to 48128, the tower's VRAM ceiling
+    # minus headroom, against a provider advertising a 1M window.
+    assert model.num_ctx == 0
+    assert model.context_bound_by == models.BOUND_BY_UNBOUNDED
+    # And nothing injects an Ollama VRAM parameter into a hosted request.
+    assert model.primary.injects_num_ctx is False
+
+
+async def test_hosted_route_uses_its_declared_window(monkeypatch):
+    _litellm_settings(monkeypatch)
+    monkeypatch.setattr(models, "get_route_registry", lambda: _hosted_registry(1_000_000))
+
+    model = await models.resolve("sirens-echo/deepseek")
+
+    assert model.num_ctx == 1_000_000 - HEADROOM
+    assert model.context_bound_by == models.BOUND_BY_MODEL_WINDOW
+
+
+async def test_local_route_behind_litellm_keeps_the_tower_ceiling(monkeypatch):
+    _litellm_settings(monkeypatch)
+    monkeypatch.setattr(models, "get_route_registry", _logical_registry)
+
+    async def fake_tower_catalog(_base_url):
+        return {"ornith:35b": 65536}, True
+
+    monkeypatch.setattr(models, "_ollama_catalog", fake_tower_catalog)
+
+    model = await models.resolve("sirens-echo/default")
+
+    # ornith really does live in the tower's VRAM, so the ceiling still binds.
+    assert model.num_ctx == 48128
+    assert model.context_bound_by == models.BOUND_BY_VRAM_CEILING
+    assert model.primary.injects_num_ctx is True
+
+
+async def test_a_declared_window_wins_over_the_tags_lookup(monkeypatch):
+    _litellm_settings(monkeypatch)
+    route = Route(
+        key="sirens-echo/default",
+        upstream_alias="sirens-echo/default",
+        direct=DirectTarget("ornith:35b", "ollama"),
+        context_window=8192,
+    )
+    registry = RouteRegistry(routes={route.key: route}, source={})
+    monkeypatch.setattr(models, "get_route_registry", lambda: registry)
+
+    async def unreachable_catalog(_base_url):
+        raise AssertionError("a declared window needs no catalog read")
+
+    monkeypatch.setattr(models, "_ollama_catalog", unreachable_catalog)
+
+    model = await models.resolve("sirens-echo/default")
+
+    assert model.num_ctx == 8192 - HEADROOM
+    assert model.context_bound_by == models.BOUND_BY_MODEL_WINDOW
+
+
+async def test_hosted_request_carries_no_num_ctx(monkeypatch):
+    _litellm_settings(monkeypatch)
+    monkeypatch.setattr(models, "get_route_registry", _hosted_registry)
+    model = await models.resolve("sirens-echo/deepseek")
+    fake = _CapturingClient({"choices": [{"message": {"content": "ok"}}]})
+    monkeypatch.setattr(upstream, "get_client", lambda: fake)
+
+    await upstream.chat(model.primary, model.num_ctx, messages=[])
+
+    assert "num_ctx" not in fake.last_body

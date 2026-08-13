@@ -66,6 +66,12 @@ route as hosted-provider-only and verifies only the authenticated LiteLLM
 control surfaces. Direct mode fails closed. Physical target names never enter
 readiness responses, logs, traces, or metric labels.
 
+`context_window` is an optional positive integer: the upstream model's real
+context window in tokens. Ollama reports its own through `/api/tags`, so a local
+target rarely needs it, while a hosted provider reports nothing. Set it when a
+model-accurate number is known. Full derivation and the four bounds:
+[context-budget-per-model.md](context-budget-per-model.md).
+
 The loader rejects unknown formats or fields, duplicate keys, missing aliases,
 malformed targets, unsafe file types, oversized files, and invalid JSON.
 Configured invalid files stop process startup before traffic is served.

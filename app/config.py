@@ -81,9 +81,13 @@ class Settings(BaseSettings):
     # Context-budget headroom reserved for the completion (leg 04 step 5).
     num_ctx_headroom: int = Field(default=1024)
 
-    # VRAM-safe upper bound on the injected num_ctx (issue #32).
-    # Derivation: docs/context-safety-settings.md.
+    # VRAM-safe upper bound on the injected num_ctx, local routes only (#32, #115).
+    # Derivation: docs/context-budget-per-model.md.
     num_ctx_ceiling: int = Field(default=49152)
+
+    # A prompt ceiling below the model's window, for cost rather than VRAM (#115).
+    # 0 leaves the model's own window as the only bound.
+    context_cost_ceiling: int = Field(default=0, ge=0)
 
     # Must match the backend's real OLLAMA_NUM_PARALLEL (issue #33).
     # Why the injected value is scaled: docs/context-safety-settings.md.

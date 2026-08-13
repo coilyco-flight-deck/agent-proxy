@@ -817,7 +817,11 @@ async def _chat_completions(
     settings = get_settings()
     try:
         messages, prompt_tokens, _trimmed = apply_context_budget(
-            model.name, messages, model.num_ctx, settings.num_ctx_headroom
+            model.name,
+            messages,
+            model.num_ctx,
+            settings.num_ctx_headroom,
+            model.context_bound_by,
         )
     except PromptPairingError as exc:
         # Locally detected and locally named, rather than an opaque upstream
@@ -1125,7 +1129,11 @@ async def completions(request: Request) -> Response:
 
     settings = get_settings()
     messages, prompt_tokens, _trimmed = apply_context_budget(
-        model.name, messages, model.num_ctx, settings.num_ctx_headroom
+        model.name,
+        messages,
+        model.num_ctx,
+        settings.num_ctx_headroom,
+        model.context_bound_by,
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
     trace_extra = _request_trace_extra(request.headers, body.get("metadata"))
