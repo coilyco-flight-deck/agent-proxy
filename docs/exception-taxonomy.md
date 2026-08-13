@@ -5,7 +5,7 @@ Management. Defined by `ERROR_TAXONOMY` in [`app/obs.py`](../app/obs.py).
 
 ## Grouping cardinality
 
-Grouping is bounded by this table: **14 codes across 8 stages**, including the
+Grouping is bounded by this table: **17 codes across 8 stages**, including the
 `unclassified_error` fallback and its `unknown` stage. Nothing at runtime can
 widen it. A code outside the table collapses to `unclassified_error` and the
 requested value is discarded rather than passed through, because an unbounded
@@ -38,10 +38,13 @@ field.
 | `request` | `model_unavailable` | Requested logical route is disabled |
 | `request` | `rate_limit_error` | Request rejected by queue backpressure |
 | `request` | `rate_limited` | Request shed for exceeding the admission rate |
+| `request` | `request_deadline_exceeded` | Request exceeded its total wall-clock budget |
 | `dispatch` | `response_validation_failed` | Upstream response failed validation |
 | `dispatch` | `context_truncated` | Backend delivered less context than requested |
 | `upstream` | `upstream_transport_failed` | Upstream backend transport failed |
 | `upstream` | `upstream_error` | All backends failed for the request |
+| `upstream` | `upstream_5xx` | Upstream backend returned a server error |
+| `upstream` | `upstream_request_rejected` | Upstream rejected the request as invalid |
 | `stream` | `stream_failed` | Streaming response failed before completion |
 | `queue` | `queue_worker_failed` | Queue worker failed while dispatching |
 | `capture` | `body_capture_failed` | Model body capture failed |
