@@ -1140,6 +1140,36 @@ def test_stream_capture_records_partial_response_on_failure(client, monkeypatch,
     assert events[1]["response.body"]["choices"][0]["message"]["content"] == "partial"
 
 
+def test_unpaired_trimmed_prompt_is_rejected_locally(client, monkeypatch):
+    """Issue #113: an unpairable prompt must not reach the backend at all."""
+    dispatched: list[object] = []
+
+    async def refuse_chat(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        dispatched.append(messages)
+        raise AssertionError("an unpaired prompt must never be dispatched")
+
+    monkeypatch.setattr(upstream, "chat", refuse_chat)
+    # A window small enough that any prompt trims, so the pairing check runs.
+    monkeypatch.setattr(models, "derive_num_ctx", lambda _context_length: 64)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "qwen3:4b",
+            "messages": [
+                {"role": "user", "content": "word " * 200},
+                {"role": "user", "content": "word " * 200},
+                {"role": "tool", "tool_call_id": "call_ghost", "content": "orphan reply"},
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"
+    assert "call_ghost" in response.json()["error"]["message"]
+    assert dispatched == []
+
+
 def test_upstream_rejection_reaches_the_caller_as_itself(client, monkeypatch):
     """Issue #114: a 400 is not a 502, and the upstream body is the useful part."""
 

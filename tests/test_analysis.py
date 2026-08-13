@@ -1,12 +1,17 @@
 """Token counting and context budgeting helpers."""
 
+import pytest
+
 from app import obs
 from app.analysis import (
+    PromptPairingError,
     apply_context_budget,
     count_message_tokens,
     count_tokens,
     detect_context_truncation,
     fit_to_budget,
+    group_tool_call_turns,
+    unpaired_tool_message,
 )
 
 # Delivered-context truncation discriminator (issue #33). Live evidence:
@@ -153,3 +158,125 @@ def test_single_oversized_turn_not_counted_as_avoided():
     msgs = [{"role": "user", "content": "word " * 5000}]
     out, total, trimmed = apply_context_budget("fast", msgs, num_ctx=500, headroom=50)
     assert out == msgs and not trimmed
+
+
+# Tool-call pairing under trimming (issue #113). A tool-heavy round crosses the
+# budget first, and dropping half a group is what the backend rejects with 400.
+
+
+def _tool_round(call_id: str, filler: str) -> list[dict]:
+    """One assistant tool call plus its reply, sized to dominate the budget."""
+    return [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "steam__get_store_app_details", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": call_id, "content": "app details " + filler},
+    ]
+
+
+def test_grouping_keeps_a_tool_reply_with_its_call():
+    groups = group_tool_call_turns(
+        [
+            {"role": "user", "content": "question"},
+            *_tool_round("call_a", "x"),
+            {"role": "assistant", "content": "answer"},
+        ]
+    )
+    assert [len(group) for group in groups] == [1, 2, 1]
+    assert groups[1][0]["role"] == "assistant" and groups[1][1]["role"] == "tool"
+
+
+def test_grouping_collects_every_reply_to_one_assistant_turn():
+    calls = [
+        {"id": f"call_{n}", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+        for n in range(5)
+    ]
+    messages = [
+        {"role": "assistant", "content": None, "tool_calls": calls},
+        *[{"role": "tool", "tool_call_id": f"call_{n}", "content": "r"} for n in range(5)],
+    ]
+    groups = group_tool_call_turns(messages)
+    # The trace in issue #113 carried exactly five replies to one assistant turn.
+    assert len(groups) == 1 and len(groups[0]) == 6
+
+
+def test_grouping_is_a_no_op_without_tool_calls():
+    messages = [
+        {"role": "user", "content": "a"},
+        {"role": "assistant", "content": "b"},
+        {"role": "user", "content": "c"},
+    ]
+    assert group_tool_call_turns(messages) == [[m] for m in messages]
+
+
+def test_trim_never_orphans_a_tool_reply():
+    filler = "word " * 500  # ~500 tokens each
+    msgs = [
+        {"role": "system", "content": "SYSTEM FRAMING"},
+        {"role": "user", "content": "old question " + filler},
+        *_tool_round("call_old", filler),
+        {"role": "user", "content": "the live question"},
+        *_tool_round("call_live", "small"),
+    ]
+    # Tight enough that the old round cannot ride along - the round the unfixed
+    # trimmer split in half.
+    out, _total, trimmed = apply_context_budget("fast", msgs, num_ctx=350, headroom=50)
+
+    assert trimmed
+    # The old round went whole: neither half survives on its own.
+    assert not any(m.get("tool_call_id") == "call_old" for m in out)
+    assert not any(
+        call.get("id") == "call_old" for m in out for call in (m.get("tool_calls") or [])
+    )
+    # The surviving prompt satisfies the contract the backend enforces.
+    assert unpaired_tool_message(out) == ""
+
+
+def test_trim_keeps_the_live_tool_round_whole_when_it_alone_is_over_budget():
+    filler = "word " * 500
+    msgs = [
+        {"role": "user", "content": "old question " + filler},
+        *_tool_round("call_live", filler),
+    ]
+    out, _total, _trimmed = apply_context_budget("fast", msgs, num_ctx=200, headroom=50)
+    # Never drop the live question, and never split it - both halves ride.
+    assert [m["role"] for m in out] == ["assistant", "tool"]
+    assert unpaired_tool_message(out) == ""
+
+
+def test_unpaired_input_fails_locally_with_the_offending_message():
+    filler = "word " * 500
+    msgs = [
+        {"role": "user", "content": "old question " + filler},
+        {"role": "user", "content": "another " + filler},
+        {"role": "tool", "tool_call_id": "call_ghost", "content": "orphan reply"},
+    ]
+    with pytest.raises(PromptPairingError) as caught:
+        apply_context_budget("fast", msgs, num_ctx=600, headroom=50)
+    assert "call_ghost" in str(caught.value)
+
+
+def test_pairing_check_accepts_a_well_formed_prompt():
+    assert (
+        unpaired_tool_message(
+            [
+                {"role": "user", "content": "q"},
+                *_tool_round("call_a", "x"),
+                {"role": "assistant", "content": "a"},
+            ]
+        )
+        == ""
+    )
+
+
+def test_pairing_check_rejects_a_reply_with_no_call():
+    reason = unpaired_tool_message([{"role": "tool", "content": "orphan"}])
+    assert "no preceding tool call" in reason

@@ -15,7 +15,13 @@ A governed client sends an OpenAI-shaped request carrying a Deploy-owned
 2. **guards the context budget** (`app/analysis.py`): counts prompt tokens and,
    if the prompt exceeds `num_ctx - headroom`, trims the oldest non-system turns,
    always keeping the system framing and the live turn. Increments
-   `llm_truncation_avoided_total` when it actually drops a turn.
+   `llm_truncation_avoided_total` when it actually drops a turn. Trimming drops
+   whole `assistant(tool_calls)` + `tool` groups, never a partial one: splitting
+   a group leaves a `tool` message answering nothing, which the OpenAI dialect
+   rejects with a 400 (issue #113, where every trimmed tool-heavy round died
+   upstream). The trimmed list is checked against the same pairing rule before
+   dispatch, so a prompt that arrived already unpaired returns a local 400
+   naming the offending message instead of an opaque upstream one.
 3. **enqueues** the job on a bounded `asyncio.Queue` and awaits its future
    (`app/queue.py`). A full queue returns HTTP 429 (`llm_queue_depth`,
    `llm_queue_rejected_total`). The `queue.wait` span closes the moment a worker
