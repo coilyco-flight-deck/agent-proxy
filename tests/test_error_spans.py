@@ -283,3 +283,65 @@ def test_request_span_carries_the_status_the_caller_received(traced, monkeypatch
         if span.name == "request.chat"
     ]
     assert 502 in statuses, "the request span must record the status the caller received"
+
+
+def test_spans_carry_backend_identity_and_regime(traced, monkeypatch, app_client):
+    """Issue #109: p99 by backend by regime needs both to be groupable."""
+    from app import models
+    from app.upstream import UpstreamResult
+
+    async def fake_catalog(_base_url):
+        return {"qwen3:4b": 262144}, True
+
+    async def served(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        return UpstreamResult(model=backend.ollama_tag, content="ok")
+
+    monkeypatch.setattr(models, "_catalog", fake_catalog)
+    monkeypatch.setattr(upstream, "chat", served)
+    monkeypatch.setattr(models.get_settings(), "backend_regime", "idle")
+    models.reset_catalog()
+
+    response = app_client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 200
+
+    by_name = {span.name: span.attributes for span in traced.get_finished_spans()}
+    # The request span is the one a latency query groups on, and it used to
+    # carry no backend at all.
+    assert by_name["request.chat"]["agentproxy.backend"] == "tower-3026"
+    assert by_name["request.chat"]["agentproxy.backend.regime"] == "idle"
+    assert by_name["resilience.attempt"]["agentproxy.backend.regime"] == "idle"
+
+
+def test_a_backend_spec_can_declare_its_own_regime(monkeypatch):
+    import json as _json
+
+    from app import models
+
+    monkeypatch.setattr(
+        models.get_settings(),
+        "backends_json",
+        _json.dumps(
+            [
+                {"name": "tower", "url": "http://tower", "regime": "contended"},
+                {"name": "hosted", "url": "http://hosted", "dialect": "openai"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(models.get_settings(), "backend_regime", "idle")
+
+    backends = models._backends_for_model("t")
+
+    # A per-backend declaration wins; the rest inherit the fleet default.
+    assert backends[0].regime == "contended"
+    assert backends[1].regime == "idle"
+
+
+def test_regime_defaults_to_unknown_rather_than_a_guess(monkeypatch):
+    from app import models
+
+    monkeypatch.setattr(models.get_settings(), "backends_json", "")
+    assert models.get_settings().backend_regime == "unknown"
+    assert models._backends_for_model("t")[0].regime == "unknown"

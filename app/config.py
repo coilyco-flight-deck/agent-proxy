@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     # Derivation: docs/context-safety-settings.md.
     num_ctx_ceiling: int = Field(default=49152)
 
+    # The operating regime every backend reports unless its spec overrides it
+    # (#109). Values and who sets them: docs/backend-regime.md.
+    backend_regime: str = Field(default="unknown")
+
     # Must match the backend's real OLLAMA_NUM_PARALLEL (issue #33).
     # Why the injected value is scaled: docs/context-safety-settings.md.
     ollama_num_parallel: int = Field(default=1)
