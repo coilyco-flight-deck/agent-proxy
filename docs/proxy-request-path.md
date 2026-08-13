@@ -18,7 +18,13 @@ A governed client sends an OpenAI-shaped request carrying a Deploy-owned
    `llm_truncation_avoided_total` when it actually drops a turn.
 3. **enqueues** the job on a bounded `asyncio.Queue` and awaits its future
    (`app/queue.py`). A full queue returns HTTP 429 (`llm_queue_depth`,
-   `llm_queue_rejected_total`). Cancelling the downstream request removes a
+   `llm_queue_rejected_total`). The `queue.wait` span closes the moment a worker
+   claims the job, so it measures admission delay and nothing else. It used to
+   stay open for the whole request and tracked `request.chat` to within a
+   millisecond, which made a saturated proxy and a slow model look identical and
+   sent issue #105 chasing a 16.6s median wait that did not exist. It carries
+   `agentproxy.queue.admitted`, false when the job ended before any worker took
+   it. Cancelling the downstream request removes a
    waiting job or cancels its active dispatch task so worker capacity is released
    without starting another retry or fallback.
 4. a **worker** dispatches under the resilience policies (`app/resilience.py`):

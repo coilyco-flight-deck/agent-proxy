@@ -49,6 +49,9 @@ class Job:
     otel_context: Any | None = None
     # Set at accept time, so queue wait spends the same budget as generation.
     deadline: float | None = None
+    # Resolved the moment a worker claims the job, which is what closes the
+    # queue.wait span. See docs/proxy-request-path.md.
+    dequeued: "asyncio.Future[None] | None" = field(default=None)
 
 
 class WorkQueue:
@@ -100,6 +103,7 @@ class WorkQueue:
             raise RuntimeError("queue not started")
         loop = asyncio.get_running_loop()
         future: asyncio.Future[UpstreamResult] = loop.create_future()
+        dequeued: asyncio.Future[None] = loop.create_future()
         job = Job(
             model=model,
             messages=messages,
@@ -109,6 +113,7 @@ class WorkQueue:
             future=future,
             otel_context=otel_context.get_current(),
             deadline=deadline,
+            dequeued=dequeued,
         )
         try:
             self._queue.put_nowait(job)
@@ -127,23 +132,36 @@ class WorkQueue:
         tracer = get_tracer()
         if tracer is None:
             return await future
-        with tracer.start_as_current_span("queue.wait") as span:
+        # Driven manually so the span closes at dequeue, not at completion.
+        # Issue #105 and docs/proxy-request-path.md.
+        span_cm = tracer.start_as_current_span("queue.wait")
+        span = span_cm.__enter__()
+        open_span = True
+        try:
             span.set_attribute("agentproxy.logical_model", model.name)
             if trace_ctx is not None:
                 for key, value in trace_ctx.attrs().items():
                     span.set_attribute(key, value)
-            try:
-                result = await future
-            except asyncio.CancelledError:
+            # `future` joins the wait so a job that fails before any worker
+            # claims it cannot leave this hanging.
+            waiters: set[asyncio.Future[Any]] = {dequeued, future}
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            span.set_attribute("agentproxy.queue.admitted", dequeued.done())
+            span_cm.__exit__(None, None, None)
+            open_span = False
+            return await future
+        except asyncio.CancelledError:
+            # asyncio.wait does not pass cancellation to the futures it watches,
+            # so the job has to be cancelled by hand or its queue slot leaks.
+            if not future.done():
+                future.cancel()
+            if open_span:
                 span.set_attribute("agentproxy.outcome", "cancelled")
                 span.add_event("queue.cancelled", {"outcome": "cancelled"})
-                raise
-            span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
-            span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
-            span.set_attribute(
-                "response.finish_reasons", [result.done_reason] if result.done_reason else []
-            )
-            return result
+            raise
+        finally:
+            if open_span:
+                span_cm.__exit__(None, None, None)
 
     def _discard_cancelled_job(self, job: Job) -> None:
         """Remove a cancelled job that has not yet been claimed by a worker."""
@@ -182,6 +200,8 @@ class WorkQueue:
         assert queue is not None
         while True:
             job = await queue.get()
+            if job.dequeued is not None and not job.dequeued.done():
+                job.dequeued.set_result(None)
             llm_queue_depth.set(queue.qsize())
             context_token = (
                 otel_context.attach(job.otel_context) if job.otel_context is not None else None
