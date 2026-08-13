@@ -96,6 +96,10 @@ class UpstreamResult:
     # Set by dispatch (issue #33) when the backend delivered a shorter context than
     # asked for - the OLLAMA_NUM_PARALLEL division. Surfaced loud, never silent.
     context_truncated: bool = False
+    # Which backend served this, and its capacity state at dispatch (#109).
+    # Stamped by dispatch, because only it knows which chain entry won.
+    served_by: str = ""
+    served_regime: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     def ollama_measurements_ms(self) -> dict[str, float]:
@@ -191,8 +195,16 @@ def _record_status_failure(span: Any | None, error: UpstreamStatusError) -> None
 
 
 def set_result_span_attributes(span: Any, result: UpstreamResult) -> None:
-    """Attach normalized usage plus any Ollama-native final-response timings."""
+    """Attach normalized usage plus any Ollama-native final-response timings.
 
+    Backend identity and regime ride along once dispatch has stamped them, so
+    the request span can be grouped by which backend actually served it rather
+    than by a client URL (#109).
+    """
+
+    if result.served_by:
+        span.set_attribute("agentproxy.backend", result.served_by)
+        span.set_attribute("agentproxy.backend.regime", result.served_regime)
     span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
     span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
     span.set_attribute(
@@ -456,6 +468,7 @@ async def chat(
     attrs = {
         "agentproxy.backend": backend.name,
         "agentproxy.backend_dialect": backend.dialect,
+        "agentproxy.backend.regime": backend.regime,
         "agentproxy.resolved_backend": backend.url,
         "agentproxy.logical_num_ctx": num_ctx,
     }
@@ -576,6 +589,7 @@ async def chat_stream(
     attrs = {
         "agentproxy.backend": backend.name,
         "agentproxy.backend_dialect": backend.dialect,
+        "agentproxy.backend.regime": backend.regime,
         "agentproxy.resolved_backend": backend.url,
         "agentproxy.logical_num_ctx": num_ctx,
     }

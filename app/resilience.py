@@ -409,6 +409,7 @@ async def dispatch(
                     attempt_span.set_attribute("agentproxy.logical_model", model.name)
                     attempt_span.set_attribute("agentproxy.backend", backend.name)
                     attempt_span.set_attribute("agentproxy.backend_dialect", backend.dialect)
+                    attempt_span.set_attribute("agentproxy.backend.regime", backend.regime)
                     attempt_span.set_attribute("agentproxy.resolved_backend", backend.url)
                     attempt_span.set_attribute("agentproxy.attempt", attempt)
                     if trace_attrs is not None:
@@ -528,6 +529,8 @@ async def dispatch(
                         continue
                     break  # exhausted this backend's retries -> fall back
 
+                result.served_by = backend.name
+                result.served_regime = backend.regime
                 ok, reason = validate_response(result)
                 if ok:
                     breakers.record_success(backend)

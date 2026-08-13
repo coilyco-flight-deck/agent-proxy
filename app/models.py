@@ -25,6 +25,8 @@ class Backend:
     # The backend's OLLAMA_NUM_PARALLEL (issue #33). 1 leaves injection
     # unchanged. Scaling rationale: docs/context-safety-settings.md.
     num_parallel: int = 1
+    # Capacity state at dispatch (#109). Docs: docs/backend-regime.md.
+    regime: str = "unknown"
 
 
 @dataclass
@@ -87,6 +89,7 @@ def _primary_base_url() -> str:
 def _backends_for_model(upstream_model: str) -> list[Backend]:
     """Stamp the resolved upstream model onto every transport target."""
     default_parallel = get_settings().ollama_num_parallel
+    default_regime = get_settings().backend_regime
     out: list[Backend] = []
     for spec in _backend_specs():
         out.append(
@@ -101,6 +104,7 @@ def _backends_for_model(upstream_model: str) -> list[Backend]:
                 injects_num_ctx=spec.get("injects_num_ctx", True),
                 timeout=spec.get("timeout"),
                 num_parallel=int(spec.get("num_parallel", default_parallel) or 1),
+                regime=str(spec.get("regime") or default_regime),
             )
         )
     return out
