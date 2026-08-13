@@ -115,6 +115,15 @@ class RequestDeadlineExceeded(BackendUnavailable):
     """
 
 
+# Key on a stream chunk that carries proxy progress rather than model output.
+# The streaming surface turns it into an SSE comment (#104).
+STREAM_STATE_KEY = "agentproxy.state"
+
+
+def _state_chunk(state: str, **fields: Any) -> dict[str, Any]:
+    return {STREAM_STATE_KEY: {"state": state, **fields}}
+
+
 def _remaining_budget(deadline: float | None) -> float | None:
     """Seconds left before ``deadline``, or ``None`` when unbounded."""
     if deadline is None:
@@ -701,10 +710,20 @@ async def dispatch_stream(
     last_error = "no backends"
     attempted_backends: list[str] = []
     trace_attrs = trace_ctx.attrs() if trace_ctx else None
-    for backend in model.backends:
+    candidates = len(model.backends)
+    for index, backend in enumerate(model.backends):
         if not breakers.allow(backend):
             continue
         attempted_backends.append(backend.name)
+        # A silent retry storm is indistinguishable from one slow attempt from
+        # outside. docs/sse-heartbeats.md.
+        yield _state_chunk(
+            "attempt",
+            n=index + 1,
+            of=candidates,
+            backend=backend.name,
+            regime=backend.regime,
+        )
         try:
             first = True
             if _out_of_budget(deadline):
@@ -719,6 +738,7 @@ async def dispatch_stream(
             ):
                 if first:
                     first = False
+                    yield _state_chunk("upstream_started", backend=backend.name)
                 elif _out_of_budget(deadline):
                     raise _deadline_exceeded(model, trace_ctx, backend, None)
                 if chunk.get("done"):

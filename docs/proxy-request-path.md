@@ -43,6 +43,10 @@ A governed client sends an OpenAI-shaped request carrying a Deploy-owned
 6. the result is shaped back to the OpenAI schema (`app/main.py`). Reasoning-model
    thought is surfaced as `reasoning_content`.
 
+A streaming request also carries SSE comment lines reporting attempt and backend
+state, which a spec-compliant client ignores and a curious one parses. See
+[SSE heartbeats](sse-heartbeats.md).
+
 Streaming requests take the same fallback chain and circuit breaker but skip the
 reroll (a token stream cannot be validated after the fact), so a harness that
 wants the full resilience guarantee uses the non-streaming path.

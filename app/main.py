@@ -40,6 +40,7 @@ from .obs import (
     llm_prompt_tokens,
     llm_route_requests_total,
     llm_requests_total,
+    llm_stream_heartbeats_total,
     log,
     log_on_span,
     metrics_text,
@@ -603,6 +604,60 @@ def _stream_chat_response(
     }
 
 
+# Emitted while a state persists so a caller can tell a slow turn from a hung
+# one. Wire shape and rationale: docs/sse-heartbeats.md.
+_KEEPALIVE = object()
+
+
+def _heartbeat(logical_model: str, span: Any | None, state: dict[str, Any]) -> str:
+    """One SSE comment line carrying proxy progress.
+
+    A line beginning with ``:`` is a comment every spec-compliant SSE client
+    ignores, so a consumer that does not parse these sees byte-identical output
+    to before. That property is why comments beat empty-delta chunks, which some
+    OpenAI-compatible clients mishandle.
+    """
+    llm_stream_heartbeats_total.labels(
+        logical_model=logical_model, state=str(state.get("state", "unknown"))
+    ).inc()
+    if span is not None:
+        span.add_event("stream.heartbeat", {"agentproxy.stream.state": str(state.get("state", ""))})
+    return f": {json.dumps(state, separators=(',', ':'))}\n\n"
+
+
+async def _with_keepalives(source: AsyncIterator[Any], interval: float) -> AsyncIterator[Any]:
+    """Yield from ``source``, interleaving a marker every ``interval`` seconds.
+
+    The marker is a sentinel rather than a chunk, so the caller decides what a
+    keepalive looks like on the wire and nothing model-shaped is invented here.
+    """
+    if interval <= 0:
+        async for item in source:
+            yield item
+        return
+
+    iterator = source.__aiter__()
+    pending: asyncio.Future[Any] | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(iterator.__anext__())
+            try:
+                # Shielded, so a keepalive tick never cancels the read in flight.
+                item = await asyncio.wait_for(asyncio.shield(pending), timeout=interval)
+            except TimeoutError:
+                yield _KEEPALIVE
+                continue
+            except StopAsyncIteration:
+                pending = None
+                return
+            pending = None
+            yield item
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+
+
 async def _stream_chat(
     model,
     messages,
@@ -654,14 +709,25 @@ async def _stream_chat(
             }
             yield f"data: {json.dumps(first)}\n\n"
 
-            async for chunk in resilience.dispatch_stream(
-                model,
-                messages,
-                tools=tools,
-                options=options,
-                trace_ctx=trace_ctx,
-                deadline=deadline,
+            heartbeat_state: dict[str, Any] = {"state": "accepted"}
+            async for chunk in _with_keepalives(
+                resilience.dispatch_stream(
+                    model,
+                    messages,
+                    tools=tools,
+                    options=options,
+                    trace_ctx=trace_ctx,
+                    deadline=deadline,
+                ),
+                get_settings().heartbeat_interval,
             ):
+                if chunk is _KEEPALIVE:
+                    yield _heartbeat(model.name, terminal_span, dict(heartbeat_state))
+                    continue
+                if state := chunk.get(resilience.STREAM_STATE_KEY):
+                    heartbeat_state = dict(state)
+                    yield _heartbeat(model.name, terminal_span, state)
+                    continue
                 msg = chunk.get("message") or {}
                 response_delta: dict[str, Any] = {}
                 piece = msg.get("content") or ""

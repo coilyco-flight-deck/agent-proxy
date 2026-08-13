@@ -35,6 +35,11 @@ llm_route_requests_total = Counter(
     ["logical_model", "upstream_mode"],
 )
 llm_queue_depth = Gauge("llm_queue_depth", "Jobs currently waiting in the in-memory queue")
+llm_stream_heartbeats_total = Counter(
+    "llm_stream_heartbeats_total",
+    "SSE heartbeat comments emitted to a streaming caller (issue #104)",
+    ["logical_model", "state"],
+)
 llm_queue_rejected_total = Counter(
     "llm_queue_rejected_total", "Requests rejected with 429 because the queue was full"
 )
