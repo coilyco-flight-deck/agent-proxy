@@ -29,6 +29,7 @@ documents already link to.
 - [Burst probe](burst-probe.md)
 - [Prompt cache accounting](proxy-prompt-cache.md)
 - [Configuration](proxy-configuration.md)
+- [Admission rate limits](rate-limits.md)
 - [Auto num_ctx and the NUM_PARALLEL coupling](proxy-num-ctx.md)
 - [Per-model context budget](context-budget-per-model.md)
 - [Running, proving, and metrics](proxy-operations.md)
