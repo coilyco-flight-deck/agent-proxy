@@ -45,10 +45,17 @@ from .obs import (
     metrics_text,
     record_error,
     record_prompt_cache_usage,
+    record_response_status,
 )
 from .readiness import UnknownRoute, check_route_readiness
 from .queue import QueueBusy, get_queue
-from .resilience import BackendUnavailable, ContextTruncated, UpstreamRequestRejected
+from .resilience import (
+    BackendUnavailable,
+    ContextTruncated,
+    RequestDeadlineExceeded,
+    UpstreamRequestRejected,
+    request_deadline,
+)
 from .route_registry import initialize_route_registry
 from .trajectory.api import router as trajectory_router
 from .trajectory.request_events import RequestLifecycle, RequestOutcome
@@ -320,7 +327,28 @@ def _error_body(message: str, err_type: str) -> dict[str, Any]:
 
 def _error(status: int, message: str, err_type: str) -> JSONResponse:
     record_error(err_type)
+    record_response_status(status)
     return JSONResponse(status_code=status, content=_error_body(message, err_type))
+
+
+# The caller's own budget, in milliseconds. It may only shorten the configured
+# deadline. Both spellings, because callers disagree. docs/request-deadline.md.
+_DEADLINE_HEADERS = ("x-request-deadline-ms", "x-request-timeout-ms")
+
+
+def _caller_deadline_ms(headers) -> float | None:
+    """Read the caller's declared budget, ignoring anything unusable."""
+    for name in _DEADLINE_HEADERS:
+        raw = headers.get(name)
+        if not raw:
+            continue
+        try:
+            value = float(raw) / 1000.0
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
 
 
 def _upstream_rejection_body(exc: UpstreamRequestRejected) -> dict[str, Any]:
@@ -588,6 +616,7 @@ async def _stream_chat(
     started: float,
     capture: ModelBodyCapture,
     shape_attrs: dict[str, int],
+    deadline: float | None = None,
 ) -> StreamingResponse:
     """Translate ollama's NDJSON stream into OpenAI ``chat.completion.chunk`` SSE."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -626,7 +655,12 @@ async def _stream_chat(
             yield f"data: {json.dumps(first)}\n\n"
 
             async for chunk in resilience.dispatch_stream(
-                model, messages, tools=tools, options=options, trace_ctx=trace_ctx
+                model,
+                messages,
+                tools=tools,
+                options=options,
+                trace_ctx=trace_ctx,
+                deadline=deadline,
             ):
                 msg = chunk.get("message") or {}
                 response_delta: dict[str, Any] = {}
@@ -786,10 +820,15 @@ async def _wait_for_disconnect(request: Request) -> None:
             return
 
 
-async def _chat_completion_until_disconnect(request: Request, body: dict[str, Any]) -> Response:
-    """Cancel non-streaming request work as soon as its client disconnects."""
+async def _until_disconnect(request: Request, work: Any) -> Response:
+    """Cancel non-streaming request work as soon as its client disconnects.
 
-    operation = asyncio.create_task(_chat_completions(body, request.headers))
+    Cancelling the task closes the in-flight httpx request, which closes the
+    upstream connection. A caller that has gone away stops costing inference
+    from that moment rather than at the upstream's own timeout (issue #112).
+    """
+
+    operation = asyncio.create_task(work)
     disconnected = asyncio.create_task(_wait_for_disconnect(request))
     try:
         done, _ = await asyncio.wait(
@@ -818,7 +857,7 @@ async def chat_completions(request: Request) -> Response:
         return _error(400, "JSON body must be an object", "invalid_request_error")
     if body.get("stream"):
         return await _chat_completions(body, request.headers)
-    return await _chat_completion_until_disconnect(request, body)
+    return await _until_disconnect(request, _chat_completions(body, request.headers))
 
 
 async def _chat_completions(
@@ -848,6 +887,7 @@ async def _chat_completions(
     stream = bool(body.get("stream", False))
 
     settings = get_settings()
+    deadline = request_deadline(_caller_deadline_ms(headers))
     messages, prompt_tokens, _trimmed = apply_context_budget(
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
@@ -899,6 +939,7 @@ async def _chat_completions(
             started=started,
             capture=capture,
             shape_attrs=shape_attrs,
+            deadline=deadline,
         )
 
     span_cm = tracer.start_as_current_span("request.chat") if tracer is not None else None
@@ -911,7 +952,9 @@ async def _chat_completions(
         _emit_capture_request(capture, request_span)
         log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
         try:
-            result = await get_queue().submit(model, messages, tools, options, trace_ctx=trace_ctx)
+            result = await get_queue().submit(
+                model, messages, tools, options, trace_ctx=trace_ctx, deadline=deadline
+            )
         except asyncio.CancelledError:
             _emit_request_terminal(lifecycle, "cancelled", started=started)
             llm_requests_total.labels(logical_model=model.name, outcome="cancelled").inc()
@@ -989,7 +1032,28 @@ async def _chat_completions(
                 upstream_status=exc.status_code,
                 error=str(exc),
             )
+            record_response_status(exc.status_code, request_span)
             return JSONResponse(status_code=exc.status_code, content=error_body)
+        except RequestDeadlineExceeded as exc:
+            error_body = _error_body(str(exc), "request_deadline_exceeded")
+            _emit_request_terminal(lifecycle, "deadline_exceeded", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="deadline_exceeded").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                error_body,
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="deadline-exceeded",
+                error=str(exc),
+            )
+            return _error(504, str(exc), "request_deadline_exceeded")
         except BackendUnavailable as exc:
             error_body = _error_body(str(exc), "upstream_error")
             _emit_request_terminal(lifecycle, "upstream_failed", started=started)
@@ -1051,6 +1115,7 @@ async def _chat_completions(
             **trace_ctx.attrs(),
             outcome="ok",
         )
+        record_response_status(200, request_span)
         return JSONResponse(content=response_body)
     finally:
         if span_cm is not None:
@@ -1144,15 +1209,22 @@ def _text_completion_response(model_name: str, result: upstream.UpstreamResult) 
 
 @app.post("/v1/completions")
 async def completions(request: Request) -> Response:
-    """Legacy text-completion surface. Modeled as a single user turn so it rides
-    the same resilience path, then shaped back to the ``text_completion`` schema."""
+    """Legacy text-completion surface, cancelled on disconnect like the chat one."""
+
     try:
         body = await request.json()
     except Exception:
         return _error(400, "invalid JSON body", "invalid_request_error")
     if not isinstance(body, dict):
         return _error(400, "JSON body must be an object", "invalid_request_error")
+    # The body must be fully read before the watcher takes over the receive
+    # channel, or the two race for the same ASGI messages.
+    return await _until_disconnect(request, _completions(body, request.headers))
 
+
+async def _completions(body: dict[str, Any], headers) -> Response:
+    """Modeled as a single user turn so it rides the same resilience path, then
+    shaped back to the ``text_completion`` schema."""
     requested_model = body.get("model")
     model_name = requested_model if isinstance(requested_model, str) else ""
     try:
@@ -1177,9 +1249,9 @@ async def completions(request: Request) -> Response:
         model.name, messages, model.num_ctx, settings.num_ctx_headroom
     )
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
-    trace_extra = _request_trace_extra(request.headers, body.get("metadata"))
+    trace_extra = _request_trace_extra(headers, body.get("metadata"))
     request_id = (
-        request.headers.get("x-request-id", "")
+        headers.get("x-request-id", "")
         or str(trace_extra.get("agentproxy.request_id", ""))
         or str(uuid.uuid4())
     )
@@ -1298,7 +1370,28 @@ async def completions(request: Request) -> Response:
                 upstream_status=exc.status_code,
                 error=str(exc),
             )
+            record_response_status(exc.status_code, request_span)
             return JSONResponse(status_code=exc.status_code, content=error_body)
+        except RequestDeadlineExceeded as exc:
+            error_body = _error_body(str(exc), "request_deadline_exceeded")
+            _emit_request_terminal(lifecycle, "deadline_exceeded", started=started)
+            llm_requests_total.labels(logical_model=model.name, outcome="deadline_exceeded").inc()
+            _emit_capture_response(
+                capture,
+                request_span,
+                error_body,
+                status="incomplete",
+                reason="upstream_failed",
+            )
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome="deadline-exceeded",
+                error=str(exc),
+            )
+            return _error(504, str(exc), "request_deadline_exceeded")
         except BackendUnavailable as exc:
             error_body = _error_body(str(exc), "upstream_error")
             _emit_request_terminal(lifecycle, "upstream_failed", started=started)
@@ -1356,6 +1449,7 @@ async def completions(request: Request) -> Response:
             **trace_ctx.attrs(),
             outcome="ok",
         )
+        record_response_status(200, request_span)
         return JSONResponse(content=response_body)
     finally:
         if span_cm is not None:

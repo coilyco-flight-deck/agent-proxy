@@ -786,7 +786,9 @@ def test_stream_chat_completion_ingests_metadata(client, monkeypatch):
     monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
     monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
 
-    async def fake_dispatch_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+    async def fake_dispatch_stream(
+        model, messages, *, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         assert trace_ctx is not None
         attrs = trace_ctx.attrs()
         assert attrs["agentproxy.request_id"] == "req-stream"
@@ -908,7 +910,9 @@ def test_chat_capture_contains_every_request_and_response_field(client, monkeypa
 def test_stream_capture_reconstructs_reasoning_tools_usage_and_finish(client, monkeypatch, capsys):
     monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
 
-    async def fake_dispatch_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+    async def fake_dispatch_stream(
+        model, messages, *, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         yield {
             "message": {"content": "Par", "thinking": "known "},
             "done": False,
@@ -1109,7 +1113,9 @@ def test_http_capture_records_incomplete_upstream_failures(
 def test_stream_capture_records_partial_response_on_failure(client, monkeypatch, capsys):
     monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
 
-    async def failing_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+    async def failing_stream(
+        model, messages, *, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         yield {"message": {"content": "partial"}, "done": False}
         raise resilience.AllBackendsFailed("stream interrupted")
 

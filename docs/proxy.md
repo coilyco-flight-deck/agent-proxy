@@ -20,6 +20,7 @@ documents already link to.
 - [Capture projections](proxy-capture-projections.md)
 - [Response validation](proxy-validation.md)
 - [Upstream error classification](upstream-error-classification.md)
+- [Request deadline and abandoned work](request-deadline.md)
 - [Prompt cache accounting](proxy-prompt-cache.md)
 - [Configuration](proxy-configuration.md)
 - [Auto num_ctx and the NUM_PARALLEL coupling](proxy-num-ctx.md)

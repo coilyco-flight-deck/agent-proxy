@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     request_timeout: float = Field(
         default=600.0, description="Per-backend upstream timeout seconds"
     )
+    # Wall clock for one caller request across every attempt and fallback (#112).
+    # 0 disables it. Rationale: docs/request-deadline.md.
+    request_deadline: float = Field(default=0.0, ge=0.0)
     readiness_timeout: float = Field(
         default=3.0,
         gt=0.0,

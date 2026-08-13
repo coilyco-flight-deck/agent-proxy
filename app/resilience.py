@@ -106,6 +106,57 @@ class UnknownModel(Exception):
     """``dispatch_resilient`` was handed a tag the backend catalog does not know."""
 
 
+class RequestDeadlineExceeded(BackendUnavailable):
+    """The request's total wall-clock budget ran out (issue #112).
+
+    Distinct from a per-attempt timeout: the budget spans queue wait, every
+    retry, and every fallback, so a request can never cost more upstream time
+    than the caller agreed to wait.
+    """
+
+
+def _remaining_budget(deadline: float | None) -> float | None:
+    """Seconds left before ``deadline``, or ``None`` when unbounded."""
+    if deadline is None:
+        return None
+    return deadline - _now()
+
+
+def _out_of_budget(deadline: float | None) -> bool:
+    remaining = _remaining_budget(deadline)
+    return remaining is not None and remaining <= 0
+
+
+def request_deadline(header_ms: float | None = None) -> float | None:
+    """The monotonic instant one request must finish by, or ``None``.
+
+    The caller's own deadline may only shorten the configured one. A caller
+    cannot buy itself more upstream time than the operator allowed, and the
+    operator's ceiling is useless if a caller can talk past it.
+    """
+    configured = get_settings().request_deadline
+    budgets = [value for value in (configured or None, header_ms) if value]
+    if not budgets:
+        return None
+    return _now() + min(budgets)
+
+
+def _deadline_exceeded(
+    model: LogicalModel,
+    trace_ctx: RequestTraceContext | None,
+    backend: Backend,
+    attempt_span: Any,
+) -> RequestDeadlineExceeded:
+    log.warning(
+        "dispatch.deadline_exceeded",
+        **request_log_fields(trace_ctx, backend=backend.name, outcome="deadline-exceeded"),
+    )
+    if attempt_span is not None:
+        attempt_span.set_attribute("agentproxy.outcome", "deadline-exceeded")
+    record_error("request_deadline_exceeded", attempt_span)
+    return RequestDeadlineExceeded(f"{model.name}: request deadline exceeded before the response")
+
+
 # Response validation
 
 _SHORT_REPLY_CHARS = 3  # leg-01 truncation garbage is 1-3 chars of non-word junk.
@@ -318,9 +369,15 @@ async def dispatch(
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
     trace_ctx: RequestTraceContext | None = None,
+    deadline: float | None = None,
 ) -> UpstreamResult:
     """Dispatch a non-streaming chat with full resilience. Walks the fallback
-    chain, retrying each live backend with backoff, validating every response."""
+    chain, retrying each live backend with backoff, validating every response.
+
+    ``deadline`` is a ``time.monotonic`` instant bounding the whole call, retries
+    and fallbacks included. Past it no further attempt starts and the in-flight
+    attempt is cut, so abandoned work stops costing inference (issue #112).
+    """
     settings = get_settings()
     last_error: str = "no backends"
     attempted_backends: list[str] = []
@@ -358,14 +415,22 @@ async def dispatch(
                         for key, value in trace_attrs.items():
                             attempt_span.set_attribute(key, value)
                 try:
+                    budget = _remaining_budget(deadline)
+                    if budget is not None and budget <= 0:
+                        raise _deadline_exceeded(model, trace_ctx, backend, attempt_span)
                     start = _now()
-                    result = await upstream.chat(
-                        backend,
-                        model.num_ctx,
-                        messages,
-                        tools=tools,
-                        options=options,
-                        span_attrs=trace_attrs,
+                    # wait_for cancels the attempt at the deadline, which closes
+                    # the httpx request and with it the upstream connection.
+                    result = await asyncio.wait_for(
+                        upstream.chat(
+                            backend,
+                            model.num_ctx,
+                            messages,
+                            tools=tools,
+                            options=options,
+                            span_attrs=trace_attrs,
+                        ),
+                        timeout=budget,
                     )
                     llm_upstream_latency_seconds.labels(
                         logical_model=model.name, backend=backend.name
@@ -380,6 +445,10 @@ async def dispatch(
                             "response.finish_reasons",
                             [result.done_reason] if result.done_reason else [],
                         )
+                except TimeoutError as exc:
+                    # wait_for already cancelled the attempt, so the upstream
+                    # connection is closed rather than left generating.
+                    raise _deadline_exceeded(model, trace_ctx, backend, attempt_span) from exc
                 except UpstreamStatusError as exc:
                     if not is_retryable_status(exc.status_code):
                         # Settled about a body that will not change, and the
@@ -420,7 +489,7 @@ async def dispatch(
                         attempt_span.set_attribute(
                             "agentproxy.upstream.status_code", exc.status_code
                         )
-                    if attempt < settings.max_retries:
+                    if attempt < settings.max_retries and not _out_of_budget(deadline):
                         llm_retries_total.labels(
                             logical_model=model.name, backend=backend.name
                         ).inc()
@@ -576,6 +645,7 @@ async def dispatch_resilient(
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
     trace_ctx: RequestTraceContext | None = None,
+    deadline: float | None = None,
 ) -> UpstreamResult:
     """Tag-based front door to the resilient dispatch engine (leg 04 step 10).
 
@@ -599,7 +669,14 @@ async def dispatch_resilient(
         trace_ctx = RequestTraceContext(
             logical_model=model.name, request_model=model_name, request_kind="chat"
         )
-    return await dispatch(model, messages, tools=tools, options=options, trace_ctx=trace_ctx)
+    return await dispatch(
+        model,
+        messages,
+        tools=tools,
+        options=options,
+        trace_ctx=trace_ctx,
+        deadline=deadline,
+    )
 
 
 async def dispatch_stream(
@@ -609,6 +686,7 @@ async def dispatch_stream(
     tools: list[dict[str, Any]] | None = None,
     options: dict[str, Any] | None = None,
     trace_ctx: RequestTraceContext | None = None,
+    deadline: float | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream a chat with connect-time fallback across the chain.
 
@@ -626,6 +704,8 @@ async def dispatch_stream(
         attempted_backends.append(backend.name)
         try:
             first = True
+            if _out_of_budget(deadline):
+                raise _deadline_exceeded(model, trace_ctx, backend, None)
             async for chunk in upstream.chat_stream(
                 backend,
                 model.num_ctx,
@@ -636,6 +716,8 @@ async def dispatch_stream(
             ):
                 if first:
                     first = False
+                elif _out_of_budget(deadline):
+                    raise _deadline_exceeded(model, trace_ctx, backend, None)
                 if chunk.get("done"):
                     result = upstream.parse_stream_result(chunk, backend.ollama_tag)
                     _observe_ollama_measurements(model.name, backend, result)

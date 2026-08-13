@@ -253,3 +253,33 @@ def test_exception_fields_carry_no_request_content(traced, monkeypatch):
             assert secret not in span.status.description
         for value in (span.attributes or {}).values():
             assert secret not in str(value)
+
+
+def test_request_span_carries_the_status_the_caller_received(traced, monkeypatch, app_client):
+    """Issue #106: an empty response_status_code makes the error rate unreadable."""
+    from app import models
+    from app.upstream import UpstreamStatusError
+
+    async def fake_catalog(_base_url):
+        return {"qwen3:4b": 262144}, True
+
+    async def unavailable(*args, **kwargs):
+        raise UpstreamStatusError("litellm: Server error '500'", status_code=500)
+
+    monkeypatch.setattr(models, "_catalog", fake_catalog)
+    monkeypatch.setattr(upstream, "chat", unavailable)
+    monkeypatch.setattr(resilience.get_settings(), "retry_base_delay", 0.0, raising=False)
+    models.reset_catalog()
+
+    response = app_client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 502
+    statuses = [
+        span.attributes.get("http.response.status_code")
+        for span in traced.get_finished_spans()
+        if span.name == "request.chat"
+    ]
+    assert 502 in statuses, "the request span must record the status the caller received"
