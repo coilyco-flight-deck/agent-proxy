@@ -786,7 +786,9 @@ def test_stream_chat_completion_ingests_metadata(client, monkeypatch):
     monkeypatch.setattr("app.resilience.get_tracer", lambda: tracer)
     monkeypatch.setattr("app.upstream.get_tracer", lambda: tracer)
 
-    async def fake_dispatch_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+    async def fake_dispatch_stream(
+        model, messages, *, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         assert trace_ctx is not None
         attrs = trace_ctx.attrs()
         assert attrs["agentproxy.request_id"] == "req-stream"
@@ -908,7 +910,9 @@ def test_chat_capture_contains_every_request_and_response_field(client, monkeypa
 def test_stream_capture_reconstructs_reasoning_tools_usage_and_finish(client, monkeypatch, capsys):
     monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
 
-    async def fake_dispatch_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+    async def fake_dispatch_stream(
+        model, messages, *, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         yield {
             "message": {"content": "Par", "thinking": "known "},
             "done": False,
@@ -1109,7 +1113,9 @@ def test_http_capture_records_incomplete_upstream_failures(
 def test_stream_capture_records_partial_response_on_failure(client, monkeypatch, capsys):
     monkeypatch.setattr("app.main.is_trace_bodies_enabled", lambda: True)
 
-    async def failing_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+    async def failing_stream(
+        model, messages, *, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         yield {"message": {"content": "partial"}, "done": False}
         raise resilience.AllBackendsFailed("stream interrupted")
 
@@ -1162,3 +1168,55 @@ def test_unpaired_trimmed_prompt_is_rejected_locally(client, monkeypatch):
     assert response.json()["error"]["type"] == "invalid_request_error"
     assert "call_ghost" in response.json()["error"]["message"]
     assert dispatched == []
+
+
+def test_upstream_rejection_reaches_the_caller_as_itself(client, monkeypatch):
+    """Issue #114: a 400 is not a 502, and the upstream body is the useful part."""
+
+    async def rejects(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        raise upstream.UpstreamStatusError(
+            "litellm: Client error '400 Bad Request'",
+            status_code=400,
+            body=json.dumps(
+                {
+                    "error": {
+                        "message": (
+                            "Messages with role 'tool' must be a response to a "
+                            "preceding message with 'tool_calls'"
+                        ),
+                        "type": "invalid_request_error",
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr(upstream, "chat", rejects)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert "must be a response to a preceding message" in error["message"]
+    assert error["upstream_status"] == 400
+    # The old behaviour pointed the operator at capacity for a payload defect.
+    assert "all backends failed" not in response.text
+
+
+def test_upstream_server_error_is_still_a_backend_failure(client, monkeypatch):
+    async def unavailable(backend, num_ctx, messages, *, tools=None, options=None, span_attrs=None):
+        raise upstream.UpstreamStatusError("litellm: Server error '503'", status_code=503, body="")
+
+    monkeypatch.setattr(upstream, "chat", unavailable)
+    monkeypatch.setattr(resilience.get_settings(), "retry_base_delay", 0.0, raising=False)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "qwen3:4b", "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["type"] == "upstream_error"

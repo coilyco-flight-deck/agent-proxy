@@ -77,7 +77,7 @@ def test_error_response_types_are_in_the_taxonomy():
 
 def test_grouping_cardinality_is_bounded_and_small():
     """The documented bound. Codes and stages are both finite and enumerable."""
-    assert len(ERROR_TAXONOMY) == 13
+    assert len(ERROR_TAXONOMY) == 16
     assert len(ERROR_STAGES) == 8
     for code, (stage, summary) in ERROR_TAXONOMY.items():
         assert stage in ERROR_STAGES
