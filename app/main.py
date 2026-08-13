@@ -13,7 +13,7 @@ import asyncio
 import json
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable
 
@@ -40,6 +40,7 @@ from .obs import (
     llm_prompt_tokens,
     llm_route_requests_total,
     llm_requests_total,
+    llm_stream_heartbeats_total,
     log,
     log_on_span,
     metrics_text,
@@ -336,6 +337,32 @@ def _error(status: int, message: str, err_type: str) -> JSONResponse:
 _DEADLINE_HEADERS = ("x-request-deadline-ms", "x-request-timeout-ms")
 
 
+# The caller naming which tier it would rather use. Echo knows ornith is behind
+# a game before the proxy can (#111). Contract: docs/prefer-backend.md.
+_PREFER_BACKEND_HEADER = "x-prefer-backend"
+
+
+def _preferred_backend(headers) -> str:
+    """The backend the caller asked to try first, or ``""``."""
+    value = headers.get(_PREFER_BACKEND_HEADER, "") or ""
+    return value.strip()[:64]
+
+
+def _apply_preference(model, headers):
+    """Reorder the chain to the caller's preference, and say whether it took."""
+    requested = _preferred_backend(headers)
+    if not requested:
+        return model
+    reordered = model.preferring(requested)
+    log.info(
+        "request.backend_preference",
+        logical_model=model.name,
+        requested_backend=requested,
+        applied=reordered.primary.name == requested,
+    )
+    return reordered
+
+
 def _caller_deadline_ms(headers) -> float | None:
     """Read the caller's declared budget, ignoring anything unusable."""
     for name in _DEADLINE_HEADERS:
@@ -603,6 +630,68 @@ def _stream_chat_response(
     }
 
 
+# Emitted while a state persists so a caller can tell a slow turn from a hung
+# one. Wire shape and rationale: docs/sse-heartbeats.md.
+_KEEPALIVE = object()
+
+
+def _heartbeat(logical_model: str, span: Any | None, state: dict[str, Any]) -> str:
+    """One SSE comment line carrying proxy progress.
+
+    A line beginning with ``:`` is a comment every spec-compliant SSE client
+    ignores, so a consumer that does not parse these sees byte-identical output
+    to before. That property is why comments beat empty-delta chunks, which some
+    OpenAI-compatible clients mishandle.
+    """
+    llm_stream_heartbeats_total.labels(
+        logical_model=logical_model, state=str(state.get("state", "unknown"))
+    ).inc()
+    if span is not None:
+        span.add_event("stream.heartbeat", {"agentproxy.stream.state": str(state.get("state", ""))})
+    return f": {json.dumps(state, separators=(',', ':'))}\n\n"
+
+
+async def _with_keepalives(source: AsyncIterator[Any], interval: float) -> AsyncIterator[Any]:
+    """Yield from ``source``, interleaving a marker every ``interval`` seconds.
+
+    The marker is a sentinel rather than a chunk, so the caller decides what a
+    keepalive looks like on the wire and nothing model-shaped is invented here.
+    """
+    if interval <= 0:
+        async for item in source:
+            yield item
+        return
+
+    iterator = source.__aiter__()
+    pending: asyncio.Future[Any] | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(iterator.__anext__())
+            try:
+                # Shielded, so a keepalive tick never cancels the read in flight.
+                item = await asyncio.wait_for(asyncio.shield(pending), timeout=interval)
+            except TimeoutError:
+                yield _KEEPALIVE
+                continue
+            except StopAsyncIteration:
+                pending = None
+                return
+            pending = None
+            yield item
+    finally:
+        # A cancelled read leaves the source generator mid-step, and closing it
+        # from there is an unraisable RuntimeError at collection time.
+        if pending is not None:
+            pending.cancel()
+            with suppress(BaseException):
+                await pending
+        aclose = getattr(iterator, "aclose", None)
+        if aclose is not None:
+            with suppress(BaseException):
+                await aclose()
+
+
 async def _stream_chat(
     model,
     messages,
@@ -654,14 +743,25 @@ async def _stream_chat(
             }
             yield f"data: {json.dumps(first)}\n\n"
 
-            async for chunk in resilience.dispatch_stream(
-                model,
-                messages,
-                tools=tools,
-                options=options,
-                trace_ctx=trace_ctx,
-                deadline=deadline,
+            heartbeat_state: dict[str, Any] = {"state": "accepted"}
+            async for chunk in _with_keepalives(
+                resilience.dispatch_stream(
+                    model,
+                    messages,
+                    tools=tools,
+                    options=options,
+                    trace_ctx=trace_ctx,
+                    deadline=deadline,
+                ),
+                get_settings().heartbeat_interval,
             ):
+                if chunk is _KEEPALIVE:
+                    yield _heartbeat(model.name, terminal_span, dict(heartbeat_state))
+                    continue
+                if state := chunk.get(resilience.STREAM_STATE_KEY):
+                    heartbeat_state = dict(state)
+                    yield _heartbeat(model.name, terminal_span, state)
+                    continue
                 msg = chunk.get("message") or {}
                 response_delta: dict[str, Any] = {}
                 piece = msg.get("content") or ""
@@ -876,6 +976,7 @@ async def _chat_completions(
         return _error(503, str(exc), "model_unavailable")
     if model is None:
         return _error(404, f"unknown model '{requested_model}'", "model_not_found")
+    model = _apply_preference(model, headers)
     llm_route_requests_total.labels(
         logical_model=model.name,
         upstream_mode=model.upstream_mode,
@@ -1247,6 +1348,7 @@ async def _completions(body: dict[str, Any], headers) -> Response:
         upstream_mode=model.upstream_mode,
     ).inc()
 
+    model = _apply_preference(model, headers)
     prompt = body.get("prompt", "")
     if isinstance(prompt, list):
         prompt = "\n".join(str(p) for p in prompt)

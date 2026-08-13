@@ -35,6 +35,16 @@ llm_route_requests_total = Counter(
     ["logical_model", "upstream_mode"],
 )
 llm_queue_depth = Gauge("llm_queue_depth", "Jobs currently waiting in the in-memory queue")
+llm_backend_saturated_total = Counter(
+    "llm_backend_saturated_total",
+    "Attempts abandoned because a backend was too slow to be treated as available (#108)",
+    ["logical_model", "backend"],
+)
+llm_stream_heartbeats_total = Counter(
+    "llm_stream_heartbeats_total",
+    "SSE heartbeat comments emitted to a streaming caller (issue #104)",
+    ["logical_model", "state"],
+)
 llm_queue_rejected_total = Counter(
     "llm_queue_rejected_total", "Requests rejected with 429 because the queue was full"
 )
@@ -373,6 +383,7 @@ ERROR_TAXONOMY: dict[str, tuple[str, str]] = {
     "rate_limit_error": ("request", "Request rejected by queue backpressure"),
     "upstream_error": ("upstream", "All backends failed for the request"),
     "upstream_5xx": ("upstream", "Upstream backend returned a server error"),
+    "backend_saturated": ("upstream", "Backend was too slow to be treated as available"),
     "request_deadline_exceeded": ("request", "Request exceeded its total wall-clock budget"),
     "upstream_request_rejected": ("upstream", "Upstream rejected the request as invalid"),
 }
