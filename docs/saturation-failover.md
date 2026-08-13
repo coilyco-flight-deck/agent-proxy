@@ -15,14 +15,12 @@ describe.
 
 Two independent gaps, either one sufficient. **Health is not capacity**: `GET
 /api/tags` returns 200 in 6.7ms while the GPU is fully occupied, which says the
-model is installed, not that inference can proceed now. And **a hang is not an
-error**: the resilience machinery fires on validation failures, 500s, and
-refused connections, and a saturated backend produces none of those. It accepts
-the request and goes quiet, and the proxy waited until the caller's deadline
-killed it.
-
-Slowness was not a failure condition. For a self-hosted GPU tier sharing
-hardware with a human, it is the *primary* one.
+model is installed, not that inference can proceed. And **a hang is not an
+error**: the machinery fires on validation failures, 500s, and refused
+connections, and a saturated backend produces none of those - it accepts the
+request and goes quiet, and the proxy waited until the caller's deadline killed
+it. Slowness was not a failure condition, and for a self-hosted GPU tier sharing
+hardware with a human it is the *primary* one.
 
 ## What changed
 
@@ -43,6 +41,9 @@ first-token signal to observe, so it bounds the whole attempt: set it above the
 slowest legitimate completion on that route, or a long answer will be mistaken
 for a stalled one.
 
+How long a saturated backend stays skipped, and on what count, is
+[saturation-stickiness.md](saturation-stickiness.md).
+
 ## Deadline versus saturation
 
 Different facts, and the caller is told which. When the request's own budget
@@ -53,17 +54,17 @@ backend was slow, the chain advances silently unless every tier is saturated.
 
 ## Saying so
 
-A streaming caller receives an SSE comment as it happens, which is the literal
-content of "aproxy doesn't know how to communicate that limitation / state".
-See [sse-heartbeats.md](sse-heartbeats.md).
+A streaming caller gets an SSE comment as it happens, which is the literal
+content of "aproxy doesn't know how to communicate that limitation / state" -
+see [sse-heartbeats.md](sse-heartbeats.md).
 
 ```
 : {"state":"backend_saturated","backend":"tower-3026","failing_over":true}
 ```
 
 The attempt span carries `agentproxy.outcome=saturated` and
-`agentproxy.backend.regime=saturated`, the counter is
-`llm_backend_saturated_total{logical_model,backend}`, and the log event is
+`agentproxy.backend.regime=saturated`, beside
+`llm_backend_saturated_total{logical_model,backend}` and
 `dispatch.backend_saturated`.
 
 ## What this does not do
@@ -74,7 +75,5 @@ half is the `regime` field in [backend-regime.md](backend-regime.md) and the
 automatic half is open. Nothing here probes capacity either: `/api/tags` still
 reports presence, and replacing it with a tiny real completion is option 1.
 
-## See also
-
-- [`backend-regime.md`](backend-regime.md) and
-  [`request-deadline.md`](request-deadline.md).
+See also [`backend-regime.md`](backend-regime.md) and
+[`request-deadline.md`](request-deadline.md).

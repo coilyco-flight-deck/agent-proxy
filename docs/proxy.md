@@ -24,6 +24,8 @@ documents already link to.
 - [Backend identity and operating regime](backend-regime.md)
 - [SSE heartbeats](sse-heartbeats.md)
 - [Saturation failover](saturation-failover.md)
+- [Saturation stickiness](saturation-stickiness.md)
+- [Burst probe](burst-probe.md)
 - [Prompt cache accounting](proxy-prompt-cache.md)
 - [Configuration](proxy-configuration.md)
 - [Auto num_ctx and the NUM_PARALLEL coupling](proxy-num-ctx.md)

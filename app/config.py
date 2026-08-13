@@ -77,6 +77,10 @@ class Settings(BaseSettings):
         default=5, description="Consecutive fails before opening a breaker"
     )
     circuit_cooldown: float = Field(default=30.0, description="Seconds a breaker stays open")
+    # Saturation is a busy backend, not a broken one, so it sticks on its own
+    # terms (#111). Definitions: docs/saturation-failover.md.
+    saturation_threshold: int = Field(default=2, ge=1)
+    saturation_cooldown: float = Field(default=900.0, ge=0.0)
     request_timeout: float = Field(
         default=600.0, description="Per-backend upstream timeout seconds"
     )

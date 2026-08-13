@@ -214,7 +214,7 @@ def _saturated(
     record_error("backend_saturated", attempt_span)
     # A backend nobody can get a token out of is unavailable, whatever it says
     # about itself, so stop sending it work for the cooldown.
-    breakers.record_failure(backend)
+    breakers.record_saturation(backend)
     return BackendSaturated(f"{model.name}: backend {backend.name} did not respond in time")
 
 
@@ -315,7 +315,10 @@ class CircuitState(IntEnum):
 class _Breaker:
     state: CircuitState = CircuitState.CLOSED
     consecutive_failures: int = 0
+    consecutive_saturations: int = 0
     opened_at: float = 0.0
+    # Whichever cooldown opened this breaker. 0 means the configured default.
+    cooldown: float = 0.0
 
 
 class CircuitBreakerRegistry:
@@ -337,7 +340,7 @@ class CircuitBreakerRegistry:
         """Whether a request may be sent to this backend right now."""
         b = self._get(backend)
         if b.state == CircuitState.OPEN:
-            cooldown = get_settings().circuit_cooldown
+            cooldown = b.cooldown or get_settings().circuit_cooldown
             if _now() - b.opened_at >= cooldown:
                 b.state = CircuitState.HALF_OPEN
                 llm_circuit_state.labels(backend=backend.name).set(CircuitState.HALF_OPEN)
@@ -348,10 +351,38 @@ class CircuitBreakerRegistry:
     def record_success(self, backend: Backend) -> None:
         b = self._get(backend)
         b.consecutive_failures = 0
+        b.consecutive_saturations = 0
+        b.cooldown = 0.0
         if b.state != CircuitState.CLOSED:
             log.info("circuit.close", backend=backend.name)
         b.state = CircuitState.CLOSED
         llm_circuit_state.labels(backend=backend.name).set(CircuitState.CLOSED)
+
+    def record_saturation(self, backend: Backend) -> None:
+        """A backend that went quiet, counted and cooled on its own terms.
+
+        A busy backend is not a broken one (#111). Each saturation costs a full
+        slow-path wait, so the count that trips it is lower than the failure
+        threshold, and the condition behind it - a game on the shared GPU -
+        outlasts a 30-second cooldown by hours, so the stick is longer.
+        """
+        b = self._get(backend)
+        b.consecutive_saturations += 1
+        settings = get_settings()
+        if (
+            b.state == CircuitState.HALF_OPEN
+            or b.consecutive_saturations >= settings.saturation_threshold
+        ):
+            b.state = CircuitState.OPEN
+            b.opened_at = _now()
+            b.cooldown = settings.saturation_cooldown
+            llm_circuit_state.labels(backend=backend.name).set(CircuitState.OPEN)
+            log.warning(
+                "circuit.open_saturated",
+                backend=backend.name,
+                saturations=b.consecutive_saturations,
+                cooldown=settings.saturation_cooldown,
+            )
 
     def record_failure(self, backend: Backend) -> None:
         b = self._get(backend)

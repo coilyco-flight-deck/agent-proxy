@@ -75,6 +75,10 @@ commands:
     run: uv run python scripts/truncation_proof.py
     description: Prove the 32k truncation cliff is gone through the proxy (needs the tower + a running proxy).
 
+  burst-probe:
+    run: uv run python scripts/burst_probe.py
+    description: Concurrency burst against a running proxy - queue or shed (needs --yes, spends tokens).
+
   reliability:
     run: uv run python scripts/reliability_loop.py
     description: Reliability harness - score a context-growing, tool-using loop and report a reliability percentage.

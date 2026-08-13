@@ -64,7 +64,7 @@ async def test_a_saturated_backend_stops_receiving_work(monkeypatch):
 
     monkeypatch.setattr(upstream, "chat", chat)
     monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
-    monkeypatch.setattr(get_settings(), "circuit_fail_threshold", 1)
+    monkeypatch.setattr(get_settings(), "saturation_threshold", 1)
     model = _chain()
 
     await resilience.dispatch(model, [{"role": "user", "content": "hi"}])
@@ -160,3 +160,72 @@ async def test_a_stream_already_generating_is_not_cut_for_being_long(monkeypatch
 
     # Only time to the first chunk is bounded; generation is progress.
     assert contents == ["first", "second"]
+
+
+# --- how long it sticks, and on what count (issue #111) --------------------- #
+
+
+async def test_one_saturation_does_not_stick_by_default(monkeypatch):
+    async def chat(backend, *args, **kwargs):
+        if backend.name == "tower":
+            await asyncio.sleep(5)
+        return UpstreamResult(model="deepseek", content="ok")
+
+    monkeypatch.setattr(upstream, "chat", chat)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
+    model = _chain()
+
+    await resilience.dispatch(model, [{"role": "user", "content": "hi"}])
+
+    # One slow turn is a slow turn. Two is a condition.
+    assert resilience.breakers.allow(model.backends[0])
+
+
+async def test_saturation_sticks_for_its_own_cooldown(monkeypatch):
+    async def chat(backend, *args, **kwargs):
+        if backend.name == "tower":
+            await asyncio.sleep(5)
+        return UpstreamResult(model="deepseek", content="ok")
+
+    monkeypatch.setattr(upstream, "chat", chat)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
+    monkeypatch.setattr(get_settings(), "saturation_threshold", 2)
+    # A game outlasts the 30s failure cooldown by hours.
+    monkeypatch.setattr(get_settings(), "saturation_cooldown", 900.0)
+    monkeypatch.setattr(get_settings(), "circuit_cooldown", 30.0)
+    model = _chain()
+    tower = model.backends[0]
+
+    for _ in range(2):
+        await resilience.dispatch(model, [{"role": "user", "content": "hi"}])
+
+    assert not resilience.breakers.allow(tower)
+    # Past the failure cooldown but well inside the saturation one.
+    breaker = resilience.breakers._get(tower)
+    breaker.opened_at = resilience._now() - 60
+    assert not resilience.breakers.allow(tower)
+    # And it does reopen eventually rather than sticking forever.
+    breaker.opened_at = resilience._now() - 901
+    assert resilience.breakers.allow(tower)
+
+
+async def test_a_recovered_backend_forgets_its_saturations(monkeypatch):
+    slow = {"value": True}
+
+    async def chat(backend, *args, **kwargs):
+        if backend.name == "tower" and slow["value"]:
+            await asyncio.sleep(5)
+        return UpstreamResult(model="ornith", content="ok")
+
+    monkeypatch.setattr(upstream, "chat", chat)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
+    model = _chain()
+
+    await resilience.dispatch(model, [{"role": "user", "content": "hi"}])
+    slow["value"] = False
+    await resilience.dispatch(model, [{"role": "user", "content": "hi"}])
+    slow["value"] = True
+    await resilience.dispatch(model, [{"role": "user", "content": "hi"}])
+
+    # The count is consecutive, so a good turn in between clears it.
+    assert resilience.breakers.allow(model.backends[0])
