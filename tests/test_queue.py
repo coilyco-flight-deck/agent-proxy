@@ -49,7 +49,9 @@ async def test_worker_delivers_result(monkeypatch):
     from app import resilience
     from app.upstream import UpstreamResult
 
-    async def fake_dispatch(model, messages, tools=None, options=None, trace_ctx=None):
+    async def fake_dispatch(
+        model, messages, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         return UpstreamResult(model="t", content="hello")
 
     monkeypatch.setattr(resilience, "dispatch", fake_dispatch)
@@ -71,7 +73,9 @@ async def test_worker_restores_submitter_trace_context(monkeypatch):
 
     observed = []
 
-    async def fake_dispatch(model, messages, tools=None, options=None, trace_ctx=None):
+    async def fake_dispatch(
+        model, messages, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         observed.append(trace.get_current_span().get_span_context())
         return UpstreamResult(model="t", content="hello")
 

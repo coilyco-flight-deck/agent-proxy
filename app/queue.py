@@ -47,6 +47,8 @@ class Job:
     # always constructs a Job with a live future, so the awaiting paths guard it.
     future: "asyncio.Future[UpstreamResult] | None" = field(default=None)
     otel_context: Any | None = None
+    # Set at accept time, so queue wait spends the same budget as generation.
+    deadline: float | None = None
 
 
 class WorkQueue:
@@ -91,6 +93,7 @@ class WorkQueue:
         options,
         *,
         trace_ctx: RequestTraceContext | None = None,
+        deadline: float | None = None,
     ) -> UpstreamResult:
         """Enqueue a job and await its result. Raises ``QueueBusy`` when full."""
         if self._queue is None:
@@ -105,6 +108,7 @@ class WorkQueue:
             trace_ctx=trace_ctx,
             future=future,
             otel_context=otel_context.get_current(),
+            deadline=deadline,
         )
         try:
             self._queue.put_nowait(job)
@@ -193,6 +197,7 @@ class WorkQueue:
                         tools=job.tools,
                         options=job.options,
                         trace_ctx=job.trace_ctx,
+                        deadline=job.deadline,
                     )
                 )
 

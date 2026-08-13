@@ -5,7 +5,7 @@ Management. Defined by `ERROR_TAXONOMY` in [`app/obs.py`](../app/obs.py).
 
 ## Grouping cardinality
 
-Grouping is bounded by this table: **15 codes across 8 stages**, including the
+Grouping is bounded by this table: **16 codes across 8 stages**, including the
 `unclassified_error` fallback and its `unknown` stage. Nothing at runtime can
 widen it. A code outside the table collapses to `unclassified_error` and the
 requested value is discarded rather than passed through, because an unbounded
@@ -37,6 +37,7 @@ field.
 | `request` | `model_not_found` | Requested logical route is unknown |
 | `request` | `model_unavailable` | Requested logical route is disabled |
 | `request` | `rate_limit_error` | Request rejected by queue backpressure |
+| `request` | `request_deadline_exceeded` | Request exceeded its total wall-clock budget |
 | `dispatch` | `response_validation_failed` | Upstream response failed validation |
 | `dispatch` | `context_truncated` | Backend delivered less context than requested |
 | `upstream` | `upstream_transport_failed` | Upstream backend transport failed |

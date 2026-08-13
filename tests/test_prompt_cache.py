@@ -258,7 +258,9 @@ def test_unreported_cache_usage_publishes_no_metric(silent_client):
 def test_streaming_turn_records_cache_tokens_from_the_terminal_chunk(monkeypatch, app_client):
     # The streaming surface rebuilds its terminal result from the normalized
     # chunk, so the chunk is the only carrier that reaches the metric.
-    async def fake_dispatch_stream(model, messages, *, tools=None, options=None, trace_ctx=None):
+    async def fake_dispatch_stream(
+        model, messages, *, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
         yield {
             "message": {"content": "Paris"},
             "done": True,

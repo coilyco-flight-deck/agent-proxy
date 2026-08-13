@@ -19,6 +19,8 @@ RequestOutcome = Literal[
     # The upstream answered and refused the request itself (issue #114). Kept
     # apart from upstream_failed, which means the backend could not serve.
     "upstream_rejected",
+    # The caller's wall-clock budget ran out (issue #112).
+    "deadline_exceeded",
     "stream_failed",
     "cancelled",
 ]
