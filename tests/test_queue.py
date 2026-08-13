@@ -1,6 +1,7 @@
 """Bounded queue backpressure (leg 04 step 3)."""
 
 import asyncio
+import time
 
 import pytest
 
@@ -100,3 +101,70 @@ async def test_worker_restores_submitter_trace_context(monkeypatch):
     assert len(observed) == 1
     assert observed[0].trace_id == 0x123
     assert observed[0].span_id == 0x456
+
+
+async def test_queue_wait_ends_at_dequeue_not_at_completion():
+    """Issue #105: the span tracked request.chat to within a millisecond."""
+    from app import obs, resilience
+    from app.upstream import UpstreamResult
+
+    finished = asyncio.Event()
+    spans: list[tuple[str, dict, float]] = []
+
+    class _Span:
+        def __init__(self, name):
+            self.name = name
+            self.attrs: dict = {}
+            self.closed_at: float | None = None
+
+        def set_attribute(self, key, value):
+            self.attrs[key] = value
+
+        def add_event(self, name, attrs=None):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.closed_at = time.monotonic()
+            spans.append((self.name, self.attrs, self.closed_at))
+            return False
+
+    class _Tracer:
+        def start_as_current_span(self, name):
+            return _Span(name)
+
+    async def slow_dispatch(
+        model, messages, tools=None, options=None, trace_ctx=None, deadline=None
+    ):
+        await finished.wait()
+        return UpstreamResult(model="t", content="done")
+
+    original = obs.get_tracer
+    obs.get_tracer = lambda: _Tracer()
+    import app.queue as queue_module
+
+    queue_module.get_tracer = lambda: _Tracer()
+    resilience_dispatch = resilience.dispatch
+    resilience.dispatch = slow_dispatch
+    q = WorkQueue(maxsize=4, worker_count=1)
+    await q.start()
+    try:
+        pending = asyncio.create_task(q.submit(_model(), [], None, None))
+        # The worker has claimed the job, so the wait is over even though the
+        # request is not.
+        await asyncio.sleep(0.05)
+        assert [name for name, _attrs, _closed in spans] == ["queue.wait"]
+        assert spans[0][1]["agentproxy.queue.admitted"] is True
+
+        finished.set()
+        result = await asyncio.wait_for(pending, timeout=1)
+        assert result.content == "done"
+        # Still exactly one, and it closed before the response existed.
+        assert len(spans) == 1
+    finally:
+        resilience.dispatch = resilience_dispatch
+        obs.get_tracer = original
+        queue_module.get_tracer = original
+        await q.stop()

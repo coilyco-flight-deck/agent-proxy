@@ -187,7 +187,6 @@ async def test_disconnect_cancels_upstream_and_releases_capacity(monkeypatch, ca
     ]
     for name, event in (
         ("request.chat", "request.cancelled"),
-        ("queue.wait", "queue.cancelled"),
         ("resilience.attempt", "dispatch.cancelled"),
         ("upstream.chat", "upstream.cancelled"),
     ):
@@ -197,6 +196,12 @@ async def test_disconnect_cancels_upstream_and_releases_capacity(monkeypatch, ca
             or span.attributes.get("agentproxy.upstream.outcome") == "cancelled"
         )
         assert event in {record.name for record in span.events}
+
+    # queue.wait closed at admission, long before the cancellation, so it
+    # reports what it saw rather than an outcome it never observed (issue #105).
+    wait_span = next(candidate for candidate in spans if candidate.name == "queue.wait")
+    assert wait_span.attributes.get("agentproxy.queue.admitted") is True
+    assert wait_span.attributes.get("agentproxy.outcome") is None
 
 
 async def test_enabled_capture_records_cancelled_response_as_incomplete(monkeypatch, capsys):
