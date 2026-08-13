@@ -34,6 +34,17 @@ _PER_MESSAGE_OVERHEAD = 4
 _SAFE_FRACTION = 0.9
 
 
+class PromptPairingError(ValueError):
+    """A prompt violates the dialect's ``assistant(tool_calls)`` / ``tool`` contract.
+
+    The OpenAI dialect rejects a ``tool`` message that does not answer a
+    preceding ``tool_calls``, and the rejection arrives as an opaque upstream
+    400 several seconds and several retries later (issue #113). The budget
+    guard raises this instead so the caller learns which message is unpaired,
+    locally, before anything is dispatched.
+    """
+
+
 @lru_cache(maxsize=1)
 def _encoder():
     import tiktoken
@@ -121,6 +132,74 @@ def detect_context_truncation(
     return delivered_below_ask and prompt_wanted_more
 
 
+def _tool_call_ids(message: dict[str, Any]) -> set[str]:
+    """The call ids an assistant message is waiting on replies for."""
+    ids: set[str] = set()
+    for call in message.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        call_id = call.get("id")
+        if isinstance(call_id, str) and call_id:
+            ids.add(call_id)
+    return ids
+
+
+def group_tool_call_turns(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Split ``messages`` into the smallest units the trimmer may drop whole.
+
+    An ``assistant`` message carrying ``tool_calls`` and the ``tool`` messages
+    answering those calls are one indivisible unit. Dropping half of one leaves
+    a ``tool`` message with nothing to answer, which the OpenAI dialect rejects
+    outright - the defect in issue #113, where a tool-heavy round crossed the
+    budget and every trimmed request died on a backend 400. Every other message
+    is its own group, so grouping changes nothing for a prompt without tools.
+    """
+    groups: list[list[dict[str, Any]]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        group = [message]
+        index += 1
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            pending = _tool_call_ids(message)
+            while index < len(messages) and messages[index].get("role") == "tool":
+                reply = messages[index]
+                call_id = reply.get("tool_call_id")
+                if pending and isinstance(call_id, str) and call_id and call_id not in pending:
+                    break  # answers an earlier turn's call, so it is not ours.
+                group.append(reply)
+                pending.discard(call_id if isinstance(call_id, str) else "")
+                index += 1
+        groups.append(group)
+    return groups
+
+
+def unpaired_tool_message(messages: list[dict[str, Any]]) -> str:
+    """Return why ``messages`` breaks tool-call pairing, or ``""`` when it holds.
+
+    Mirrors the upstream rule verbatim: a ``tool`` message must answer a
+    preceding message with ``tool_calls``.
+    """
+    called: set[str] = set()
+    run_open = False
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        if role == "assistant" and message.get("tool_calls"):
+            called |= _tool_call_ids(message)
+            run_open = True
+            continue
+        if role == "tool":
+            call_id = message.get("tool_call_id")
+            if isinstance(call_id, str) and call_id:
+                if call_id not in called:
+                    return f"message {index} answers tool call {call_id!r}, which was never made"
+            elif not run_open:
+                return f"message {index} is a tool reply with no preceding tool call"
+            continue
+        run_open = False
+    return ""
+
+
 def apply_context_budget(
     logical_model: str,
     messages: list[dict[str, Any]],
@@ -133,6 +212,12 @@ def apply_context_budget(
     kept (they hold the task framing whose loss caused the leg-01 garbage). The
     most recent turn is kept even if it alone is over budget - we never drop the
     live question. Increments ``llm_truncation_avoided_total`` when it trims.
+
+    Trimming drops whole ``assistant(tool_calls)`` + ``tool`` groups, never a
+    partial one, and the trimmed list is checked for pairing before it is
+    returned. A list that cannot be made valid raises
+    :class:`PromptPairingError` rather than travelling to the backend as an
+    opaque 400 (issue #113).
     """
     budget = max(num_ctx - headroom, 1)
     total = count_message_tokens(messages)
@@ -144,16 +229,16 @@ def apply_context_budget(
 
     system_tokens = count_message_tokens(system)
     # Keep the newest turns; drop from the oldest end of `rest` until we fit.
-    kept_rev: list[dict[str, Any]] = []
+    kept_rev: list[list[dict[str, Any]]] = []
     running = system_tokens
-    for m in reversed(rest):
-        cost = count_tokens(_message_text(m)) + _PER_MESSAGE_OVERHEAD
+    for group in reversed(group_tool_call_turns(rest)):
+        cost = count_message_tokens(group)
         if running + cost > budget and kept_rev:
             break  # would overflow and we already kept the live turn - stop.
         running += cost
-        kept_rev.append(m)
+        kept_rev.append(group)
 
-    trimmed_rest = list(reversed(kept_rev))
+    trimmed_rest = [message for group in reversed(kept_rev) for message in group]
     # Reassemble preserving original ordering: systems first (their relative
     # order preserved), then the surviving non-system tail in order.
     result = system + trimmed_rest
@@ -164,6 +249,11 @@ def apply_context_budget(
         # One live turn over budget cannot be trimmed, and the model will cap
         # it, so this is not an avoided truncation - do not claim one.
         return result, new_total, False
+
+    # Group-wise dropping cannot orphan a reply, so a failure here means the
+    # caller's own prompt was already unpaired. Say which message, locally.
+    if reason := unpaired_tool_message(result):
+        raise PromptPairingError(f"{logical_model}: {reason}")
 
     emit_instrumented_action(
         InstrumentedAction(

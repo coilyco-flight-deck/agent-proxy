@@ -25,7 +25,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from prometheus_client import CONTENT_TYPE_LATEST
 
 from . import resilience, upstream
-from .analysis import apply_context_budget
+from .analysis import PromptPairingError, apply_context_budget
 from .body_capture import BodyCaptureError, CaptureReason, CaptureStatus, ModelBodyCapture
 from .config import get_settings
 from .models import RouteUnavailable, list_tags, resolve
@@ -815,9 +815,14 @@ async def _chat_completions(
     stream = bool(body.get("stream", False))
 
     settings = get_settings()
-    messages, prompt_tokens, _trimmed = apply_context_budget(
-        model.name, messages, model.num_ctx, settings.num_ctx_headroom
-    )
+    try:
+        messages, prompt_tokens, _trimmed = apply_context_budget(
+            model.name, messages, model.num_ctx, settings.num_ctx_headroom
+        )
+    except PromptPairingError as exc:
+        # Locally detected and locally named, rather than an opaque upstream
+        # 400 three retries later (issue #113).
+        return _error(400, str(exc), "invalid_request_error")
     llm_prompt_tokens.labels(logical_model=model.name).observe(prompt_tokens)
     trace_extra = _request_trace_extra(headers, body.get("metadata"))
     request_id = (
