@@ -13,7 +13,7 @@ import asyncio
 import json
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Callable
 
@@ -654,8 +654,16 @@ async def _with_keepalives(source: AsyncIterator[Any], interval: float) -> Async
             pending = None
             yield item
     finally:
-        if pending is not None and not pending.done():
+        # A cancelled read leaves the source generator mid-step, and closing it
+        # from there is an unraisable RuntimeError at collection time.
+        if pending is not None:
             pending.cancel()
+            with suppress(BaseException):
+                await pending
+        aclose = getattr(iterator, "aclose", None)
+        if aclose is not None:
+            with suppress(BaseException):
+                await aclose()
 
 
 async def _stream_chat(

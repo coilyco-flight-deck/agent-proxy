@@ -157,7 +157,12 @@ async def test_keepalives_fire_while_a_state_persists():
             seen.append(item)
 
     task = asyncio.create_task(drain())
-    await asyncio.sleep(0.1)
+    # Wait for the behaviour rather than for the clock, so a loaded runner
+    # cannot turn this into a flake.
+    for _ in range(200):
+        if seen:
+            break
+        await asyncio.sleep(0.01)
     assert seen and all(item is main._KEEPALIVE for item in seen)
     keepalives = len(seen)
 
