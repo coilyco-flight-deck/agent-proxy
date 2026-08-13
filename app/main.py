@@ -337,6 +337,32 @@ def _error(status: int, message: str, err_type: str) -> JSONResponse:
 _DEADLINE_HEADERS = ("x-request-deadline-ms", "x-request-timeout-ms")
 
 
+# The caller naming which tier it would rather use. Echo knows ornith is behind
+# a game before the proxy can (#111). Contract: docs/prefer-backend.md.
+_PREFER_BACKEND_HEADER = "x-prefer-backend"
+
+
+def _preferred_backend(headers) -> str:
+    """The backend the caller asked to try first, or ``""``."""
+    value = headers.get(_PREFER_BACKEND_HEADER, "") or ""
+    return value.strip()[:64]
+
+
+def _apply_preference(model, headers):
+    """Reorder the chain to the caller's preference, and say whether it took."""
+    requested = _preferred_backend(headers)
+    if not requested:
+        return model
+    reordered = model.preferring(requested)
+    log.info(
+        "request.backend_preference",
+        logical_model=model.name,
+        requested_backend=requested,
+        applied=reordered.primary.name == requested,
+    )
+    return reordered
+
+
 def _caller_deadline_ms(headers) -> float | None:
     """Read the caller's declared budget, ignoring anything unusable."""
     for name in _DEADLINE_HEADERS:
@@ -950,6 +976,7 @@ async def _chat_completions(
         return _error(503, str(exc), "model_unavailable")
     if model is None:
         return _error(404, f"unknown model '{requested_model}'", "model_not_found")
+    model = _apply_preference(model, headers)
     llm_route_requests_total.labels(
         logical_model=model.name,
         upstream_mode=model.upstream_mode,
@@ -1312,6 +1339,7 @@ async def _completions(body: dict[str, Any], headers) -> Response:
         upstream_mode=model.upstream_mode,
     ).inc()
 
+    model = _apply_preference(model, headers)
     prompt = body.get("prompt", "")
     if isinstance(prompt, list):
         prompt = "\n".join(str(p) for p in prompt)

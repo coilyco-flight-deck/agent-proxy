@@ -21,10 +21,11 @@ probing still recovers without a human.
 
 ## What is still open
 
-Nothing here lets `sirens-echo` *tell* the proxy to switch. That was the
-literal ask, and the two shapes for it - a request header or a small admin
-pin endpoint - differ enough that #111 carries the choice rather than this
-document. The thresholds below are what works without one.
+The caller can now say so outright with `X-Prefer-Backend` - see
+[prefer-backend.md](prefer-backend.md). What is still open on #111 is the
+*shared* version: an admin endpoint pinning a route for every caller until an
+expiry, which fits an operator flipping a switch before a game and sits less
+comfortably with Ward owning authorization.
 
 ## See also
 

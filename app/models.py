@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .config import get_settings
@@ -41,6 +41,22 @@ class LogicalModel:
     @property
     def primary(self) -> Backend:
         return self.backends[0]
+
+    def preferring(self, backend_name: str) -> "LogicalModel":
+        """Return this route with ``backend_name`` tried first.
+
+        Reordering rather than filtering is deliberate: the caller states a
+        preference and still keeps every other tier behind it, so a hint can
+        never empty the chain or turn a recoverable turn into a hard failure
+        (#111). An unrecognised name leaves the order untouched.
+        """
+        if not backend_name:
+            return self
+        preferred = [b for b in self.backends if b.name == backend_name]
+        if not preferred:
+            return self
+        rest = [b for b in self.backends if b.name != backend_name]
+        return replace(self, backends=preferred + rest)
 
 
 # num_ctx derivation

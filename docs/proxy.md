@@ -25,6 +25,7 @@ documents already link to.
 - [SSE heartbeats](sse-heartbeats.md)
 - [Saturation failover](saturation-failover.md)
 - [Saturation stickiness](saturation-stickiness.md)
+- [Caller backend preference](prefer-backend.md)
 - [Burst probe](burst-probe.md)
 - [Prompt cache accounting](proxy-prompt-cache.md)
 - [Configuration](proxy-configuration.md)
