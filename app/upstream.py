@@ -28,6 +28,47 @@ class UpstreamError(Exception):
     """A backend call failed at the transport/HTTP level (not a bad generation)."""
 
 
+class UpstreamStatusError(UpstreamError):
+    """A backend answered, and its answer was a non-2xx status.
+
+    Distinct from its base because a status is evidence about *what* failed and
+    a bare transport error is not. Issue #114 measured the cost of collapsing
+    the two: a deterministic 400 was bucketed as ``dispatch.transport_error``,
+    retried three times with a byte-identical body, and returned as a 502
+    naming a backend that was serving other requests at the time.
+    """
+
+    def __init__(self, message: str, status_code: int, body: str = "") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
+
+
+# 4xx that a later identical attempt can still resolve: a timeout, a too-early
+# send, and a rate limit. Every other 4xx is a settled fact about the body.
+RETRYABLE_CLIENT_STATUSES = frozenset({408, 425, 429})
+
+# Upstream error bodies ride into the caller's response, so they are bounded.
+MAX_UPSTREAM_ERROR_BODY = 2048
+
+
+def is_retryable_status(status_code: int) -> bool:
+    """Whether resending the identical request could plausibly succeed."""
+    return status_code >= 500 or status_code in RETRYABLE_CLIENT_STATUSES
+
+
+def _status_error(backend: Backend, exc: httpx.HTTPStatusError) -> UpstreamStatusError:
+    try:
+        body = exc.response.text[:MAX_UPSTREAM_ERROR_BODY]
+    except Exception:
+        body = ""
+    return UpstreamStatusError(
+        f"{backend.name}: {exc}",
+        status_code=exc.response.status_code,
+        body=body,
+    )
+
+
 class RequestAuthKwargs(TypedDict, total=False):
     headers: dict[str, str]
 
@@ -55,6 +96,10 @@ class UpstreamResult:
     # Set by dispatch (issue #33) when the backend delivered a shorter context than
     # asked for - the OLLAMA_NUM_PARALLEL division. Surfaced loud, never silent.
     context_truncated: bool = False
+    # Which backend served this, and its capacity state at dispatch (#109).
+    # Stamped by dispatch, because only it knows which chain entry won.
+    served_by: str = ""
+    served_regime: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     def ollama_measurements_ms(self) -> dict[str, float]:
@@ -128,9 +173,38 @@ def parse_cache_usage(usage: dict[str, Any] | None) -> tuple[bool, int, int]:
     return (True, max(read or 0, 0), max(write or 0, 0))
 
 
-def set_result_span_attributes(span: Any, result: UpstreamResult) -> None:
-    """Attach normalized usage plus any Ollama-native final-response timings."""
+def _record_status_failure(span: Any | None, error: UpstreamStatusError) -> None:
+    """Put the upstream status on the span, so the failure is not invisible.
 
+    Issue #106 found a trace where litellm returned 500 and every agent-proxy
+    span still read ``has_error: false`` with an empty status code, which makes
+    the service's reported error rate untrustworthy.
+    """
+    error_type = (
+        "upstream_request_rejected"
+        if not is_retryable_status(error.status_code)
+        else "upstream_5xx"
+    )
+    record_error(error_type, span)
+    if span is None:
+        return
+    span.set_attribute("http.response.status_code", error.status_code)
+    span.set_attribute("agentproxy.upstream.status_code", error.status_code)
+    span.set_attribute("agentproxy.upstream.error", str(error))
+    span.set_attribute("agentproxy.upstream.retryable", is_retryable_status(error.status_code))
+
+
+def set_result_span_attributes(span: Any, result: UpstreamResult) -> None:
+    """Attach normalized usage plus any Ollama-native final-response timings.
+
+    Backend identity and regime ride along once dispatch has stamped them, so
+    the request span can be grouped by which backend actually served it rather
+    than by a client URL (#109).
+    """
+
+    if result.served_by:
+        span.set_attribute("agentproxy.backend", result.served_by)
+        span.set_attribute("agentproxy.backend.regime", result.served_regime)
     span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
     span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
     span.set_attribute(
@@ -397,6 +471,7 @@ async def chat(
     attrs = {
         "agentproxy.backend": backend.name,
         "agentproxy.backend_dialect": backend.dialect,
+        "agentproxy.backend.regime": backend.regime,
         "agentproxy.resolved_backend": backend.url,
         "agentproxy.logical_num_ctx": num_ctx,
     }
@@ -420,6 +495,8 @@ async def chat(
                 outcome="cancelled",
             )
             raise
+        except httpx.HTTPStatusError as exc:
+            raise _status_error(backend, exc) from exc
         except httpx.HTTPError as exc:
             raise UpstreamError(f"{backend.name}: {exc}") from exc
         return (
@@ -452,6 +529,18 @@ async def chat(
                 **cancellation_fields,
             )
             raise
+        except httpx.HTTPStatusError as exc:
+            status_error = _status_error(backend, exc)
+            _record_status_failure(span, status_error)
+            log.warning(
+                "upstream.completed",
+                **_correlation_log_fields(span_attrs),
+                backend=backend.name,
+                backend_dialect=backend.dialect,
+                outcome="failed",
+                upstream_status=status_error.status_code,
+            )
+            raise status_error from exc
         except httpx.HTTPError as exc:
             record_error("upstream_transport_failed", span)
             span.set_attribute("agentproxy.upstream.error", str(exc))
@@ -503,6 +592,7 @@ async def chat_stream(
     attrs = {
         "agentproxy.backend": backend.name,
         "agentproxy.backend_dialect": backend.dialect,
+        "agentproxy.backend.regime": backend.regime,
         "agentproxy.resolved_backend": backend.url,
         "agentproxy.logical_num_ctx": num_ctx,
     }
@@ -600,6 +690,19 @@ async def chat_stream(
             **cancellation_fields,
         )
         raise
+    except httpx.HTTPStatusError as exc:
+        status_error = _status_error(backend, exc)
+        if span_cm is not None:
+            _record_status_failure(span, status_error)
+        log.warning(
+            "upstream.completed",
+            **_correlation_log_fields(span_attrs),
+            backend=backend.name,
+            backend_dialect=backend.dialect,
+            outcome="failed",
+            upstream_status=status_error.status_code,
+        )
+        raise status_error from exc
     except httpx.HTTPError as exc:
         if span_cm is not None:
             record_error("upstream_transport_failed", span)
@@ -645,6 +748,10 @@ async def generate(
             **request_auth_kwargs(backend),
         )
         resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        status_error = _status_error(backend, exc)
+        _record_status_failure(None, status_error)
+        raise status_error from exc
     except httpx.HTTPError as exc:
         record_error("upstream_transport_failed")
         raise UpstreamError(f"{backend.name}: {exc}") from exc

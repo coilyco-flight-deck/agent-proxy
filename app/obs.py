@@ -372,6 +372,9 @@ ERROR_TAXONOMY: dict[str, tuple[str, str]] = {
     "model_unavailable": ("request", "Requested logical route is disabled"),
     "rate_limit_error": ("request", "Request rejected by queue backpressure"),
     "upstream_error": ("upstream", "All backends failed for the request"),
+    "upstream_5xx": ("upstream", "Upstream backend returned a server error"),
+    "request_deadline_exceeded": ("request", "Request exceeded its total wall-clock budget"),
+    "upstream_request_rejected": ("upstream", "Upstream rejected the request as invalid"),
 }
 
 # Fallback for a code outside the table. Unknown codes must never widen
@@ -426,6 +429,23 @@ def record_error(error_type: str, span: Any | None = None) -> None:
         return
     with _tracer.start_as_current_span("error.recorded") as error_span:
         _record_error_on_span(error_span, error_type)
+
+
+def record_response_status(status_code: int, span: Any | None = None) -> None:
+    """Stamp the status the caller actually received onto the request span.
+
+    Issue #106 found a 240-second trace whose root span carried an empty
+    ``response_status_code`` and ``has_error: false`` while the upstream had
+    returned 500, which makes any alert built on the service error rate
+    untrustworthy.
+    """
+    target = span
+    if target is None or not getattr(target, "is_recording", lambda: False)():
+        target = _current_span()
+    if target is None:
+        return
+    target.set_attribute("http.response.status_code", status_code)
+    target.set_attribute("agentproxy.response.status_code", status_code)
 
 
 def get_current_trace_span():

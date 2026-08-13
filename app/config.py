@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     request_timeout: float = Field(
         default=600.0, description="Per-backend upstream timeout seconds"
     )
+    # Wall clock for one caller request across every attempt and fallback (#112).
+    # 0 disables it. Rationale: docs/request-deadline.md.
+    request_deadline: float = Field(default=0.0, ge=0.0)
     readiness_timeout: float = Field(
         default=3.0,
         gt=0.0,
@@ -88,6 +91,10 @@ class Settings(BaseSettings):
     # A prompt ceiling below the model's window, for cost rather than VRAM (#115).
     # 0 leaves the model's own window as the only bound.
     context_cost_ceiling: int = Field(default=0, ge=0)
+
+    # The operating regime every backend reports unless its spec overrides it
+    # (#109). Values and who sets them: docs/backend-regime.md.
+    backend_regime: str = Field(default="unknown")
 
     # Must match the backend's real OLLAMA_NUM_PARALLEL (issue #33).
     # Why the injected value is scaled: docs/context-safety-settings.md.

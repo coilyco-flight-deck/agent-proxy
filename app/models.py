@@ -25,6 +25,8 @@ class Backend:
     # The backend's OLLAMA_NUM_PARALLEL (issue #33). 1 leaves injection
     # unchanged. Scaling rationale: docs/context-safety-settings.md.
     num_parallel: int = 1
+    # Capacity state at dispatch (#109). Docs: docs/backend-regime.md.
+    regime: str = "unknown"
 
 
 # What bounded a route's prompt budget, so the trim log never has to be guessed at.
@@ -139,6 +141,7 @@ def _backends_for_model(upstream_model: str, *, injects_num_ctx: bool = True) ->
     still wins when it opts out.
     """
     default_parallel = get_settings().ollama_num_parallel
+    default_regime = get_settings().backend_regime
     out: list[Backend] = []
     for spec in _backend_specs():
         out.append(
@@ -153,6 +156,7 @@ def _backends_for_model(upstream_model: str, *, injects_num_ctx: bool = True) ->
                 injects_num_ctx=bool(spec.get("injects_num_ctx", True)) and injects_num_ctx,
                 timeout=spec.get("timeout"),
                 num_parallel=int(spec.get("num_parallel", default_parallel) or 1),
+                regime=str(spec.get("regime") or default_regime),
             )
         )
     return out

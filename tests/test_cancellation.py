@@ -187,7 +187,6 @@ async def test_disconnect_cancels_upstream_and_releases_capacity(monkeypatch, ca
     ]
     for name, event in (
         ("request.chat", "request.cancelled"),
-        ("queue.wait", "queue.cancelled"),
         ("resilience.attempt", "dispatch.cancelled"),
         ("upstream.chat", "upstream.cancelled"),
     ):
@@ -197,6 +196,12 @@ async def test_disconnect_cancels_upstream_and_releases_capacity(monkeypatch, ca
             or span.attributes.get("agentproxy.upstream.outcome") == "cancelled"
         )
         assert event in {record.name for record in span.events}
+
+    # queue.wait closed at admission, long before the cancellation, so it
+    # reports what it saw rather than an outcome it never observed (issue #105).
+    wait_span = next(candidate for candidate in spans if candidate.name == "queue.wait")
+    assert wait_span.attributes.get("agentproxy.queue.admitted") is True
+    assert wait_span.attributes.get("agentproxy.outcome") is None
 
 
 async def test_enabled_capture_records_cancelled_response_as_incomplete(monkeypatch, capsys):
@@ -241,3 +246,158 @@ async def test_enabled_capture_records_cancelled_response_as_incomplete(monkeypa
     assert events[1]["agentproxy.capture.status"] == "incomplete"
     assert events[1]["agentproxy.capture.reason"] == "cancelled"
     assert events[1]["response.body"] == {}
+
+
+# Total request deadline (issue #112). The timeout ladder measured there was
+# inverted at every layer: caller 180s, agent-proxy 240s, litellm 600s, ~1004s.
+
+
+async def test_deadline_cuts_the_attempt_and_stops_upstream_work(monkeypatch):
+    upstream_cancelled = asyncio.Event()
+    never_answers = asyncio.Event()
+
+    async def hangs(request: httpx.Request) -> httpx.Response:
+        try:
+            await never_answers.wait()
+        except asyncio.CancelledError:
+            upstream_cancelled.set()
+            raise
+        raise AssertionError("the transport should never answer")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(hangs))
+    monkeypatch.setattr(upstream, "get_client", lambda: client)
+    monkeypatch.setattr(resilience, "breakers", resilience.CircuitBreakerRegistry())
+    model = LogicalModel(
+        name="sirens-echo/deepseek",
+        num_ctx=4096,
+        backends=[
+            Backend(
+                name="litellm",
+                url="http://litellm.invalid",
+                ollama_tag="deepseek",
+                dialect="openai",
+                injects_num_ctx=False,
+            )
+        ],
+        upstream_mode="litellm",
+    )
+
+    with pytest.raises(resilience.RequestDeadlineExceeded):
+        await resilience.dispatch(
+            model,
+            [{"role": "user", "content": "hi"}],
+            deadline=resilience._now() + 0.05,
+        )
+
+    # The attempt was cut, so the connection closed instead of being abandoned
+    # while the upstream kept generating for nobody.
+    await asyncio.wait_for(upstream_cancelled.wait(), timeout=1)
+
+
+async def test_expired_deadline_starts_no_attempt(monkeypatch):
+    calls: list[str] = []
+
+    async def never_called(*args, **kwargs):
+        calls.append("called")
+        raise AssertionError("an expired budget must not reach the upstream")
+
+    monkeypatch.setattr(upstream, "chat", never_called)
+    monkeypatch.setattr(resilience, "breakers", resilience.CircuitBreakerRegistry())
+    model = LogicalModel(
+        name="expired",
+        num_ctx=4096,
+        backends=[Backend(name="b", url="http://x", ollama_tag="t")],
+    )
+
+    with pytest.raises(resilience.RequestDeadlineExceeded):
+        await resilience.dispatch(
+            model, [{"role": "user", "content": "hi"}], deadline=resilience._now() - 1
+        )
+
+    assert calls == []
+
+
+def test_caller_deadline_only_shortens_the_configured_one(monkeypatch):
+    settings = resilience.get_settings()
+    monkeypatch.setattr(settings, "request_deadline", 100.0)
+    base = resilience._now()
+
+    # A caller asking for less gets less.
+    assert resilience.request_deadline(10.0) - base == pytest.approx(10.0, abs=0.5)
+    # A caller asking for more is held to the operator's ceiling.
+    assert resilience.request_deadline(1000.0) - base == pytest.approx(100.0, abs=0.5)
+
+
+def test_no_deadline_configured_means_unbounded(monkeypatch):
+    monkeypatch.setattr(resilience.get_settings(), "request_deadline", 0.0)
+    assert resilience.request_deadline(None) is None
+
+
+def test_caller_header_alone_bounds_an_unconfigured_deadline(monkeypatch):
+    monkeypatch.setattr(resilience.get_settings(), "request_deadline", 0.0)
+    base = resilience._now()
+    assert resilience.request_deadline(30.0) - base == pytest.approx(30.0, abs=0.5)
+
+
+def test_caller_deadline_header_is_read_from_either_spelling():
+    assert main._caller_deadline_ms({"x-request-deadline-ms": "1500"}) == 1.5
+    assert main._caller_deadline_ms({"x-request-timeout-ms": "2000"}) == 2.0
+    assert main._caller_deadline_ms({"x-request-deadline-ms": "not-a-number"}) is None
+    assert main._caller_deadline_ms({"x-request-deadline-ms": "-5"}) is None
+    assert main._caller_deadline_ms({}) is None
+
+
+async def test_completions_disconnect_cancels_upstream(monkeypatch):
+    """Issue #112: the legacy surface abandoned work the chat surface cancels."""
+    upstream_started = asyncio.Event()
+    upstream_cancelled = asyncio.Event()
+    blocked = asyncio.Event()
+
+    async def blocking_upstream(request: httpx.Request) -> httpx.Response:
+        upstream_started.set()
+        try:
+            await blocked.wait()
+        except asyncio.CancelledError:
+            upstream_cancelled.set()
+            raise
+        raise AssertionError("the transport should never answer")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(blocking_upstream))
+    monkeypatch.setattr(upstream, "get_client", lambda: client)
+    monkeypatch.setattr(resilience, "breakers", resilience.CircuitBreakerRegistry())
+    model = LogicalModel(
+        name="sirens-echo/default",
+        num_ctx=4096,
+        backends=[
+            Backend(
+                name="primary",
+                url="http://primary.invalid",
+                ollama_tag="fixture-provider-model",
+                dialect="openai",
+                injects_num_ctx=False,
+            )
+        ],
+        upstream_mode="litellm",
+    )
+
+    async def resolve_model(name: str) -> LogicalModel | None:
+        return model if name == model.name else None
+
+    queue = WorkQueue(maxsize=1, worker_count=1)
+    await queue.start()
+    monkeypatch.setattr(main, "resolve", resolve_model)
+    monkeypatch.setattr(main, "get_queue", lambda: queue)
+
+    request, receive = _request({"model": model.name, "prompt": "block"})
+    request.scope["path"] = "/v1/completions"
+    try:
+        handler = asyncio.create_task(main.completions(request))
+        await asyncio.wait_for(upstream_started.wait(), timeout=1)
+        receive.put_nowait({"type": "http.disconnect"})
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(handler, timeout=1)
+        await asyncio.wait_for(upstream_cancelled.wait(), timeout=1)
+    finally:
+        await queue.stop()
+        await client.aclose()
