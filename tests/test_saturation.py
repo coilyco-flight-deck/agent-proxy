@@ -44,7 +44,7 @@ async def test_a_quiet_backend_fails_over_instead_of_being_waited_on(monkeypatch
         return UpstreamResult(model="deepseek", content="from the hosted tier")
 
     monkeypatch.setattr(upstream, "chat", chat)
-    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.05)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
     model = _chain()
     before = _saturations(model.name, "tower")
 
@@ -63,7 +63,7 @@ async def test_a_saturated_backend_stops_receiving_work(monkeypatch):
         return UpstreamResult(model="deepseek", content="ok")
 
     monkeypatch.setattr(upstream, "chat", chat)
-    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.05)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
     monkeypatch.setattr(get_settings(), "circuit_fail_threshold", 1)
     model = _chain()
 
@@ -103,7 +103,7 @@ async def test_a_spent_budget_is_a_deadline_not_a_saturation(monkeypatch):
         await resilience.dispatch(
             _chain(),
             [{"role": "user", "content": "hi"}],
-            deadline=resilience._now() + 0.05,
+            deadline=resilience._now() + 0.2,
         )
 
 
@@ -112,7 +112,7 @@ async def test_every_tier_saturated_exhausts_the_chain(monkeypatch):
         await asyncio.sleep(5)
 
     monkeypatch.setattr(upstream, "chat", chat)
-    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.05)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
 
     with pytest.raises(resilience.AllBackendsFailed, match="did not respond in time"):
         await resilience.dispatch(_chain(), [{"role": "user", "content": "hi"}])
@@ -128,7 +128,7 @@ async def test_a_stream_that_never_starts_fails_over_and_says_so(monkeypatch):
         yield {"message": {"content": "hosted"}, "done": True, "done_reason": "stop"}
 
     monkeypatch.setattr(upstream, "chat_stream", chat_stream)
-    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.05)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
 
     chunks = [chunk async for chunk in resilience.dispatch_stream(_chain(), [])]
     states = [
@@ -145,11 +145,12 @@ async def test_a_stream_that_never_starts_fails_over_and_says_so(monkeypatch):
 async def test_a_stream_already_generating_is_not_cut_for_being_long(monkeypatch):
     async def chat_stream(backend, *args, **kwargs):
         yield {"message": {"content": "first"}}
-        await asyncio.sleep(0.2)
+        # Longer than the threshold: a stream already generating is not cut.
+        await asyncio.sleep(0.7)
         yield {"message": {"content": "second"}, "done": True, "done_reason": "stop"}
 
     monkeypatch.setattr(upstream, "chat_stream", chat_stream)
-    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.05)
+    monkeypatch.setattr(get_settings(), "backend_slow_after", 0.5)
 
     contents = [
         chunk.get("message", {}).get("content")
