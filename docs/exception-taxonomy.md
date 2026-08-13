@@ -5,7 +5,7 @@ Management. Defined by `ERROR_TAXONOMY` in [`app/obs.py`](../app/obs.py).
 
 ## Grouping cardinality
 
-Grouping is bounded by this table: **16 codes across 8 stages**, including the
+Grouping is bounded by this table: **17 codes across 8 stages**, including the
 `unclassified_error` fallback and its `unknown` stage. Nothing at runtime can
 widen it. A code outside the table collapses to `unclassified_error` and the
 requested value is discarded rather than passed through, because an unbounded
@@ -43,6 +43,7 @@ field.
 | `upstream` | `upstream_transport_failed` | Upstream backend transport failed |
 | `upstream` | `upstream_error` | All backends failed for the request |
 | `upstream` | `upstream_5xx` | Upstream backend returned a server error |
+| `upstream` | `backend_saturated` | Backend was too slow to be treated as available |
 | `upstream` | `upstream_request_rejected` | Upstream rejected the request as invalid |
 | `stream` | `stream_failed` | Streaming response failed before completion |
 | `queue` | `queue_worker_failed` | Queue worker failed while dispatching |

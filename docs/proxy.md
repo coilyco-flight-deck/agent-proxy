@@ -23,6 +23,7 @@ documents already link to.
 - [Request deadline and abandoned work](request-deadline.md)
 - [Backend identity and operating regime](backend-regime.md)
 - [SSE heartbeats](sse-heartbeats.md)
+- [Saturation failover](saturation-failover.md)
 - [Prompt cache accounting](proxy-prompt-cache.md)
 - [Configuration](proxy-configuration.md)
 - [Auto num_ctx and the NUM_PARALLEL coupling](proxy-num-ctx.md)

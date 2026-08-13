@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     queue_maxsize: int = Field(default=100)
     worker_count: int = Field(default=4)
 
+    # Seconds an attempt may run before its backend counts as saturated and the
+    # chain advances (#108). 0 disables. Rationale: docs/saturation-failover.md.
+    backend_slow_after: float = Field(default=0.0, ge=0.0)
+
     # Seconds between SSE keepalive comments while a state persists (#104).
     # 0 disables them. Wire shape: docs/sse-heartbeats.md.
     heartbeat_interval: float = Field(default=10.0, ge=0.0)
