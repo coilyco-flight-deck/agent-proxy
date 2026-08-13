@@ -67,6 +67,14 @@ class Settings(BaseSettings):
     rate_limit_per_second: float = Field(default=1.0, ge=0.0)
     rate_limit_burst: int = Field(default=1, ge=1)
 
+    # Seconds an attempt may run before its backend counts as saturated and the
+    # chain advances (#108). 0 disables. Rationale: docs/saturation-failover.md.
+    backend_slow_after: float = Field(default=0.0, ge=0.0)
+
+    # Seconds between SSE keepalive comments while a state persists (#104).
+    # 0 disables them. Wire shape: docs/sse-heartbeats.md.
+    heartbeat_interval: float = Field(default=10.0, ge=0.0)
+
     # Resilience knobs (leg 04 step 4).
     max_retries: int = Field(default=2, description="Retries per backend before falling back")
     retry_base_delay: float = Field(default=0.5, description="Backoff base seconds")
@@ -74,6 +82,10 @@ class Settings(BaseSettings):
         default=5, description="Consecutive fails before opening a breaker"
     )
     circuit_cooldown: float = Field(default=30.0, description="Seconds a breaker stays open")
+    # Saturation is a busy backend, not a broken one, so it sticks on its own
+    # terms (#111). Definitions: docs/saturation-failover.md.
+    saturation_threshold: int = Field(default=2, ge=1)
+    saturation_cooldown: float = Field(default=900.0, ge=0.0)
     request_timeout: float = Field(
         default=600.0, description="Per-backend upstream timeout seconds"
     )
@@ -89,9 +101,13 @@ class Settings(BaseSettings):
     # Context-budget headroom reserved for the completion (leg 04 step 5).
     num_ctx_headroom: int = Field(default=1024)
 
-    # VRAM-safe upper bound on the injected num_ctx (issue #32).
-    # Derivation: docs/context-safety-settings.md.
+    # VRAM-safe upper bound on the injected num_ctx, local routes only (#32, #115).
+    # Derivation: docs/context-budget-per-model.md.
     num_ctx_ceiling: int = Field(default=49152)
+
+    # A prompt ceiling below the model's window, for cost rather than VRAM (#115).
+    # 0 leaves the model's own window as the only bound.
+    context_cost_ceiling: int = Field(default=0, ge=0)
 
     # The operating regime every backend reports unless its spec overrides it
     # (#109). Values and who sets them: docs/backend-regime.md.

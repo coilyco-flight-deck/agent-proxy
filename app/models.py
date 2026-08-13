@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .config import get_settings
@@ -29,6 +29,13 @@ class Backend:
     regime: str = "unknown"
 
 
+# What bounded a route's prompt budget, so the trim log never has to be guessed at.
+BOUND_BY_MODEL_WINDOW = "model_window"
+BOUND_BY_VRAM_CEILING = "vram_ceiling"
+BOUND_BY_COST_CEILING = "cost_ceiling"
+BOUND_BY_UNBOUNDED = "unbounded"
+
+
 @dataclass
 class LogicalModel:
     """A logical route, safe context window, and ordered transport chain."""
@@ -37,17 +44,36 @@ class LogicalModel:
     num_ctx: int
     backends: list[Backend] = field(default_factory=list)
     upstream_mode: str = "direct"
+    # Which of the four bounds produced ``num_ctx`` (issue #115). ``num_ctx`` of
+    # 0 means no local bound applies and the provider is the only authority.
+    context_bound_by: str = BOUND_BY_VRAM_CEILING
 
     @property
     def primary(self) -> Backend:
         return self.backends[0]
+
+    def preferring(self, backend_name: str) -> "LogicalModel":
+        """Return this route with ``backend_name`` tried first.
+
+        Reordering rather than filtering is deliberate: the caller states a
+        preference and still keeps every other tier behind it, so a hint can
+        never empty the chain or turn a recoverable turn into a hard failure
+        (#111). An unrecognised name leaves the order untouched.
+        """
+        if not backend_name:
+            return self
+        preferred = [b for b in self.backends if b.name == backend_name]
+        if not preferred:
+            return self
+        rest = [b for b in self.backends if b.name != backend_name]
+        return replace(self, backends=preferred + rest)
 
 
 # num_ctx derivation
 
 
 def derive_num_ctx(context_length: int | None) -> int:
-    """Derive the safe ``num_ctx`` from a model's real context window.
+    """Derive the safe ``num_ctx`` from a locally-served model's real window.
 
     ``min(context_length, configured_ceiling) - headroom``. The ceiling
     (``PROXY_NUM_CTX_CEILING``) is the VRAM-safe upper bound the tower can carry
@@ -55,12 +81,48 @@ def derive_num_ctx(context_length: int | None) -> int:
     (``PROXY_NUM_CTX_HEADROOM``) leaves room for the completion. A ``None``
     context length (backend unreachable, or a tag present but not reporting one)
     falls back to the ceiling so a real request never gets a degenerate window.
+
+    This is the local-inference derivation. A hosted route has no VRAM to run
+    out of, so it goes through :func:`derive_context_budget` instead.
+    """
+    return derive_context_budget(context_length, local=True)[0]
+
+
+def derive_context_budget(context_length: int | None, *, local: bool) -> tuple[int, str]:
+    """Return ``(num_ctx, bound_by)`` for one route.
+
+    ``num_ctx`` is a VRAM allocation, and issue #115 measured what happens when
+    it is applied where it does not belong: every hosted route inherited the
+    tower's 49152-token ceiling and trimmed at 47104 against a provider
+    advertising a 1M window, which manufactured the failures in #113. So the
+    ceiling binds ``local`` routes only.
+
+    A hosted route with no declared window returns 0, meaning no local bound.
+    The provider owns its own limit and reports it in an error the caller can
+    read, which beats inventing a number here and enforcing it silently.
+    ``PROXY_CONTEXT_COST_CEILING`` is the way to ask for a smaller budget than
+    the model allows, and it is named for the reason it exists.
     """
     settings = get_settings()
-    ceiling = settings.num_ctx_ceiling
     headroom = settings.num_ctx_headroom
-    base = ceiling if context_length is None else min(context_length, ceiling)
-    return max(base - headroom, 1)
+    cost_ceiling = settings.context_cost_ceiling
+
+    if local:
+        ceiling = settings.num_ctx_ceiling
+        if context_length is None or context_length >= ceiling:
+            base, bound_by = ceiling, BOUND_BY_VRAM_CEILING
+        else:
+            base, bound_by = context_length, BOUND_BY_MODEL_WINDOW
+    elif context_length is None:
+        base, bound_by = 0, BOUND_BY_UNBOUNDED
+    else:
+        base, bound_by = context_length, BOUND_BY_MODEL_WINDOW
+
+    if cost_ceiling and (base <= 0 or cost_ceiling < base):
+        base, bound_by = cost_ceiling, BOUND_BY_COST_CEILING
+    if base <= 0:
+        return 0, bound_by
+    return max(base - headroom, 1), bound_by
 
 
 # Backend chain (tag-independent)
@@ -86,8 +148,14 @@ def _primary_base_url() -> str:
     return _backend_specs()[0]["url"].rstrip("/")
 
 
-def _backends_for_model(upstream_model: str) -> list[Backend]:
-    """Stamp the resolved upstream model onto every transport target."""
+def _backends_for_model(upstream_model: str, *, injects_num_ctx: bool = True) -> list[Backend]:
+    """Stamp the resolved upstream model onto every transport target.
+
+    ``injects_num_ctx=False`` suppresses the ``num_ctx`` extension for a route
+    a hosted provider serves. The parameter is an Ollama VRAM allocation and
+    means nothing to such a provider (issue #115); the backend spec's own flag
+    still wins when it opts out.
+    """
     default_parallel = get_settings().ollama_num_parallel
     default_regime = get_settings().backend_regime
     out: list[Backend] = []
@@ -101,7 +169,7 @@ def _backends_for_model(upstream_model: str) -> list[Backend]:
                 chat_path=spec.get("chat_path"),
                 health_path=spec.get("health_path"),
                 api_key_file=spec.get("api_key_file"),
-                injects_num_ctx=spec.get("injects_num_ctx", True),
+                injects_num_ctx=bool(spec.get("injects_num_ctx", True)) and injects_num_ctx,
                 timeout=spec.get("timeout"),
                 num_parallel=int(spec.get("num_parallel", default_parallel) or 1),
                 regime=str(spec.get("regime") or default_regime),
@@ -207,12 +275,15 @@ async def resolve(tag: str) -> LogicalModel | None:
     tags, ok = await _catalog(_primary_base_url())
     if ok and tag not in tags:
         return None
-    num_ctx = derive_num_ctx(tags.get(tag))
+    # Compatibility mode resolves a physical tag out of the tower's own catalog,
+    # so the target is local by construction.
+    num_ctx, bound_by = derive_context_budget(tags.get(tag), local=True)
     return LogicalModel(
         name=tag,
         num_ctx=num_ctx,
         backends=_backends_for_model(tag),
         upstream_mode="direct",
+        context_bound_by=bound_by,
     )
 
 
@@ -234,13 +305,16 @@ async def _resolve_route(route: Route) -> LogicalModel:
     specs = _backend_specs()
     dialects = {spec.get("dialect", "ollama") for spec in specs}
     direct_model = route.direct.model if route.direct is not None else None
-    context_length: int | None = None
+    context_length: int | None = route.context_window
+    # No direct target means a hosted provider serves it, so the tower's VRAM
+    # ceiling means nothing here (#115). See docs/context-budget-per-model.md.
+    local = direct_model is not None
 
     if settings.route_upstream_mode == "litellm":
         if dialects != {"openai"}:
             raise RouteUnavailable(f"route '{route.key}' requires the LiteLLM upstream")
         upstream_model = route.upstream_alias
-        if direct_model:
+        if direct_model and context_length is None:
             tower_tags, ok = await _ollama_catalog(settings.resolved_tower_base_url())
             if ok:
                 context_length = tower_tags.get(direct_model)
@@ -250,15 +324,18 @@ async def _resolve_route(route: Route) -> LogicalModel:
         if route.direct is None or route.direct.runtime != "ollama":
             raise RouteUnavailable(f"route '{route.key}' has no supported direct target")
         upstream_model = route.direct.model
-        tower_tags, ok = await _ollama_catalog(specs[0]["url"])
-        if ok:
-            context_length = tower_tags.get(upstream_model)
+        if context_length is None:
+            tower_tags, ok = await _ollama_catalog(specs[0]["url"])
+            if ok:
+                context_length = tower_tags.get(upstream_model)
 
+    num_ctx, bound_by = derive_context_budget(context_length, local=local)
     return LogicalModel(
         name=route.key,
-        num_ctx=derive_num_ctx(context_length),
-        backends=_backends_for_model(upstream_model),
+        num_ctx=num_ctx,
+        backends=_backends_for_model(upstream_model, injects_num_ctx=local),
         upstream_mode=settings.route_upstream_mode,
+        context_bound_by=bound_by,
     )
 
 

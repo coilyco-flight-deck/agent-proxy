@@ -33,6 +33,9 @@ class Route:
     direct: DirectTarget | None
     readiness_targets: tuple[DirectTarget, ...] = ()
     enabled: bool = True
+    # The upstream model's real context window, when Deploy knows it (#115).
+    # Contract: docs/route-registry-contract.md.
+    context_window: int | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,14 @@ def _direct(value: Any, key: str) -> DirectTarget | None:
     return DirectTarget(model=model, runtime=runtime)
 
 
+def _context_window(value: Any, key: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise RouteRegistryError(f"{key}: context_window must be a positive integer")
+    return value
+
+
 def _readiness_targets(value: Any, key: str) -> tuple[DirectTarget, ...]:
     if value is None:
         return ()
@@ -164,7 +175,14 @@ def load_route_registry(path_value: str | Path) -> RouteRegistry:
             raise RouteRegistryError(f"route {index} must be an object")
         _keys(
             row,
-            {"key", "upstream_alias", "direct", "readiness_targets", "enabled"},
+            {
+                "key",
+                "upstream_alias",
+                "direct",
+                "readiness_targets",
+                "enabled",
+                "context_window",
+            },
             f"route {index}",
         )
         key = _route_key(row.get("key"))
@@ -180,6 +198,7 @@ def load_route_registry(path_value: str | Path) -> RouteRegistry:
             direct=_direct(row.get("direct"), key),
             readiness_targets=_readiness_targets(row.get("readiness_targets"), key),
             enabled=enabled,
+            context_window=_context_window(row.get("context_window"), key),
         )
     return RouteRegistry(routes=routes, source=_source(payload.get("source")))
 

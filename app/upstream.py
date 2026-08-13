@@ -353,14 +353,17 @@ def _chat_body(
         "messages": messages,
         "stream": stream,
     }
+    # A non-positive num_ctx means no locally-derived window applies, so there is
+    # nothing to inject and the provider's own limit stands (issue #115).
+    inject = backend.injects_num_ctx and num_ctx > 0
     if backend.dialect == "ollama":
-        if backend.injects_num_ctx:
+        if inject:
             body["options"] = _inject_options(options, num_ctx, backend.num_parallel)
         elif options:
             body["options"] = dict(options)
     else:
         body.update(_openai_options(options))
-        if backend.injects_num_ctx:
+        if inject:
             body["num_ctx"] = num_ctx
         if metadata := _gateway_metadata(span_attrs):
             body["metadata"] = metadata

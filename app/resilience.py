@@ -34,6 +34,7 @@ from .obs import (
     InstrumentedAction,
     RequestTraceContext,
     emit_instrumented_action,
+    llm_backend_saturated_total,
     llm_circuit_state,
     llm_context_truncated_total,
     llm_fallbacks_total,
@@ -106,6 +107,15 @@ class UnknownModel(Exception):
     """``dispatch_resilient`` was handed a tag the backend catalog does not know."""
 
 
+class BackendSaturated(Exception):
+    """A backend accepted the request and went quiet past the slow threshold.
+
+    Not an error the backend reported - it never reported anything, which is the
+    whole problem in issue #108. Raised internally so the chain advances to the
+    next tier instead of waiting out the caller's deadline.
+    """
+
+
 class RequestDeadlineExceeded(BackendUnavailable):
     """The request's total wall-clock budget ran out (issue #112).
 
@@ -113,6 +123,15 @@ class RequestDeadlineExceeded(BackendUnavailable):
     retry, and every fallback, so a request can never cost more upstream time
     than the caller agreed to wait.
     """
+
+
+# Key on a stream chunk that carries proxy progress rather than model output.
+# The streaming surface turns it into an SSE comment (#104).
+STREAM_STATE_KEY = "agentproxy.state"
+
+
+def _state_chunk(state: str, **fields: Any) -> dict[str, Any]:
+    return {STREAM_STATE_KEY: {"state": state, **fields}}
 
 
 def _remaining_budget(deadline: float | None) -> float | None:
@@ -139,6 +158,64 @@ def request_deadline(header_ms: float | None = None) -> float | None:
     if not budgets:
         return None
     return _now() + min(budgets)
+
+
+async def _first_chunk_bounded(
+    source: AsyncIterator[dict[str, Any]], limit: float | None
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield from ``source``, raising :class:`TimeoutError` if nothing arrives in time.
+
+    Only the wait for the first chunk is bounded. A stream that has started is
+    making progress, and cutting it because generation is long would be the
+    opposite of what issue #108 asks for.
+    """
+    iterator = source.__aiter__()
+    if limit is None:
+        async for item in iterator:
+            yield item
+        return
+    try:
+        first = await asyncio.wait_for(iterator.__anext__(), timeout=limit)
+    except StopAsyncIteration:
+        return
+    yield first
+    async for item in iterator:
+        yield item
+
+
+def _slow_after(deadline: float | None) -> float | None:
+    """The attempt bound: the slow threshold, or the remaining budget if sooner."""
+    slow = get_settings().backend_slow_after or None
+    budget = _remaining_budget(deadline)
+    candidates = [value for value in (slow, budget) if value is not None]
+    return min(candidates) if candidates else None
+
+
+def _saturated(
+    model: LogicalModel,
+    trace_ctx: RequestTraceContext | None,
+    backend: Backend,
+    attempt_span: Any,
+) -> BackendSaturated:
+    """Record a backend that went quiet, and open its breaker."""
+    llm_backend_saturated_total.labels(logical_model=model.name, backend=backend.name).inc()
+    log.warning(
+        "dispatch.backend_saturated",
+        **request_log_fields(
+            trace_ctx,
+            backend=backend.name,
+            outcome="saturated",
+            slow_after=get_settings().backend_slow_after,
+        ),
+    )
+    if attempt_span is not None:
+        attempt_span.set_attribute("agentproxy.outcome", "saturated")
+        attempt_span.set_attribute("agentproxy.backend.regime", "saturated")
+    record_error("backend_saturated", attempt_span)
+    # A backend nobody can get a token out of is unavailable, whatever it says
+    # about itself, so stop sending it work for the cooldown.
+    breakers.record_saturation(backend)
+    return BackendSaturated(f"{model.name}: backend {backend.name} did not respond in time")
 
 
 def _deadline_exceeded(
@@ -238,7 +315,10 @@ class CircuitState(IntEnum):
 class _Breaker:
     state: CircuitState = CircuitState.CLOSED
     consecutive_failures: int = 0
+    consecutive_saturations: int = 0
     opened_at: float = 0.0
+    # Whichever cooldown opened this breaker. 0 means the configured default.
+    cooldown: float = 0.0
 
 
 class CircuitBreakerRegistry:
@@ -260,7 +340,7 @@ class CircuitBreakerRegistry:
         """Whether a request may be sent to this backend right now."""
         b = self._get(backend)
         if b.state == CircuitState.OPEN:
-            cooldown = get_settings().circuit_cooldown
+            cooldown = b.cooldown or get_settings().circuit_cooldown
             if _now() - b.opened_at >= cooldown:
                 b.state = CircuitState.HALF_OPEN
                 llm_circuit_state.labels(backend=backend.name).set(CircuitState.HALF_OPEN)
@@ -271,10 +351,38 @@ class CircuitBreakerRegistry:
     def record_success(self, backend: Backend) -> None:
         b = self._get(backend)
         b.consecutive_failures = 0
+        b.consecutive_saturations = 0
+        b.cooldown = 0.0
         if b.state != CircuitState.CLOSED:
             log.info("circuit.close", backend=backend.name)
         b.state = CircuitState.CLOSED
         llm_circuit_state.labels(backend=backend.name).set(CircuitState.CLOSED)
+
+    def record_saturation(self, backend: Backend) -> None:
+        """A backend that went quiet, counted and cooled on its own terms.
+
+        A busy backend is not a broken one (#111). Each saturation costs a full
+        slow-path wait, so the count that trips it is lower than the failure
+        threshold, and the condition behind it - a game on the shared GPU -
+        outlasts a 30-second cooldown by hours, so the stick is longer.
+        """
+        b = self._get(backend)
+        b.consecutive_saturations += 1
+        settings = get_settings()
+        if (
+            b.state == CircuitState.HALF_OPEN
+            or b.consecutive_saturations >= settings.saturation_threshold
+        ):
+            b.state = CircuitState.OPEN
+            b.opened_at = _now()
+            b.cooldown = settings.saturation_cooldown
+            llm_circuit_state.labels(backend=backend.name).set(CircuitState.OPEN)
+            log.warning(
+                "circuit.open_saturated",
+                backend=backend.name,
+                saturations=b.consecutive_saturations,
+                cooldown=settings.saturation_cooldown,
+            )
 
     def record_failure(self, backend: Backend) -> None:
         b = self._get(backend)
@@ -431,7 +539,7 @@ async def dispatch(
                             options=options,
                             span_attrs=trace_attrs,
                         ),
-                        timeout=budget,
+                        timeout=_slow_after(deadline),
                     )
                     llm_upstream_latency_seconds.labels(
                         logical_model=model.name, backend=backend.name
@@ -449,7 +557,12 @@ async def dispatch(
                 except TimeoutError as exc:
                     # wait_for already cancelled the attempt, so the upstream
                     # connection is closed rather than left generating.
-                    raise _deadline_exceeded(model, trace_ctx, backend, attempt_span) from exc
+                    if _out_of_budget(deadline):
+                        raise _deadline_exceeded(model, trace_ctx, backend, attempt_span) from exc
+                    # Slow, not spent: the backend is the problem, so advance
+                    # the chain. docs/saturation-failover.md.
+                    last_error = str(_saturated(model, trace_ctx, backend, attempt_span))
+                    break
                 except UpstreamStatusError as exc:
                     if not is_retryable_status(exc.status_code):
                         # Settled about a body that will not change, and the
@@ -701,24 +814,38 @@ async def dispatch_stream(
     last_error = "no backends"
     attempted_backends: list[str] = []
     trace_attrs = trace_ctx.attrs() if trace_ctx else None
-    for backend in model.backends:
+    candidates = len(model.backends)
+    for index, backend in enumerate(model.backends):
         if not breakers.allow(backend):
             continue
         attempted_backends.append(backend.name)
+        # A silent retry storm is indistinguishable from one slow attempt from
+        # outside. docs/sse-heartbeats.md.
+        yield _state_chunk(
+            "attempt",
+            n=index + 1,
+            of=candidates,
+            backend=backend.name,
+            regime=backend.regime,
+        )
         try:
             first = True
             if _out_of_budget(deadline):
                 raise _deadline_exceeded(model, trace_ctx, backend, None)
-            async for chunk in upstream.chat_stream(
+            stream = upstream.chat_stream(
                 backend,
                 model.num_ctx,
                 messages,
                 tools=tools,
                 options=options,
                 span_attrs=trace_attrs,
-            ):
+            )
+            # Only time to the first chunk is bounded. Generation that has
+            # started is progress. docs/saturation-failover.md.
+            async for chunk in _first_chunk_bounded(stream, _slow_after(deadline)):
                 if first:
                     first = False
+                    yield _state_chunk("upstream_started", backend=backend.name)
                 elif _out_of_budget(deadline):
                     raise _deadline_exceeded(model, trace_ctx, backend, None)
                 if chunk.get("done"):
@@ -727,6 +854,12 @@ async def dispatch_stream(
                 yield chunk
             breakers.record_success(backend)
             return
+        except TimeoutError as exc:
+            if _out_of_budget(deadline):
+                raise _deadline_exceeded(model, trace_ctx, backend, None) from exc
+            last_error = str(_saturated(model, trace_ctx, backend, None))
+            yield _state_chunk("backend_saturated", backend=backend.name, failing_over=True)
+            continue
         except asyncio.CancelledError:
             log.info(
                 "stream.cancelled",
