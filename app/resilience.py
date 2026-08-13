@@ -47,7 +47,7 @@ from .obs import (
     get_tracer,
 )
 from . import upstream
-from .upstream import UpstreamError, UpstreamResult
+from .upstream import UpstreamError, UpstreamResult, UpstreamStatusError, is_retryable_status
 
 
 def _observe_ollama_measurements(
@@ -64,8 +64,32 @@ def _observe_ollama_measurements(
         ).observe(milliseconds / 1000)
 
 
-class AllBackendsFailed(Exception):
-    """Every backend in the chain was exhausted or open."""
+class BackendUnavailable(Exception):
+    """Dispatch could not get a usable response out of the backend chain."""
+
+
+class AllBackendsFailed(BackendUnavailable):
+    """Every backend in the chain was exhausted or open.
+
+    Raised only when the chain actually offered more than one backend. Issue
+    #114 recorded the wording being applied to a single backend that rejected a
+    single payload, which points an operator at capacity when the defect was in
+    the request.
+    """
+
+
+class UpstreamRequestRejected(Exception):
+    """The upstream rejected the request itself, not the backend's availability.
+
+    Carries the upstream status and body through to the caller. A 400 is a
+    settled fact about a byte-identical body, so it is neither retried nor
+    reported as a backend failure (issue #114).
+    """
+
+    def __init__(self, message: str, status_code: int, body: str = "") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
 
 
 class ContextTruncated(Exception):
@@ -299,6 +323,7 @@ async def dispatch(
     chain, retrying each live backend with backoff, validating every response."""
     settings = get_settings()
     last_error: str = "no backends"
+    attempted_backends: list[str] = []
     tracer = get_tracer()
     trace_attrs = trace_ctx.attrs() if trace_ctx else None
     # The proxy's own prompt count, identical across attempts, held once as the
@@ -316,6 +341,7 @@ async def dispatch(
             )
             continue
 
+        attempted_backends.append(backend.name)
         for attempt in range(settings.max_retries + 1):
             # Driven manually, not `with`: the body can continue/break/return
             # mid-await, and a leaked span leaks its OTel context token.
@@ -354,6 +380,59 @@ async def dispatch(
                             "response.finish_reasons",
                             [result.done_reason] if result.done_reason else [],
                         )
+                except UpstreamStatusError as exc:
+                    if not is_retryable_status(exc.status_code):
+                        # Settled about a body that will not change, and the
+                        # backend answered. docs/upstream-error-classification.md.
+                        breakers.record_success(backend)
+                        log.warning(
+                            "dispatch.request_rejected",
+                            **request_log_fields(
+                                trace_ctx,
+                                backend=backend.name,
+                                attempt=attempt,
+                                outcome="request-rejected",
+                                upstream_status=exc.status_code,
+                            ),
+                        )
+                        if attempt_span is not None:
+                            attempt_span.set_attribute("agentproxy.outcome", "request-rejected")
+                            attempt_span.set_attribute(
+                                "agentproxy.upstream.status_code", exc.status_code
+                            )
+                        raise UpstreamRequestRejected(
+                            f"{model.name}: upstream rejected the request ({exc})",
+                            status_code=exc.status_code,
+                            body=exc.body,
+                        ) from exc
+                    breakers.record_failure(backend)
+                    last_error = str(exc)
+                    log.warning(
+                        "dispatch.transport_error",
+                        backend=backend.name,
+                        attempt=attempt,
+                        error=str(exc),
+                        upstream_status=exc.status_code,
+                    )
+                    if attempt_span is not None:
+                        record_error("upstream_transport_failed", attempt_span)
+                        attempt_span.set_attribute("agentproxy.outcome", "failed")
+                        attempt_span.set_attribute(
+                            "agentproxy.upstream.status_code", exc.status_code
+                        )
+                    if attempt < settings.max_retries:
+                        llm_retries_total.labels(
+                            logical_model=model.name, backend=backend.name
+                        ).inc()
+                        log.info(
+                            "dispatch.retry",
+                            **request_log_fields(
+                                trace_ctx, backend=backend.name, attempt=attempt, outcome="retry"
+                            ),
+                        )
+                        await asyncio.sleep(settings.retry_base_delay * (2**attempt))
+                        continue
+                    break  # exhausted this backend's retries -> fall back
                 except UpstreamError as exc:
                     breakers.record_failure(backend)
                     last_error = str(exc)
@@ -474,7 +553,20 @@ async def dispatch(
                 **request_log_fields(trace_ctx, backend=backend.name, outcome="fallback"),
             )
 
-    raise AllBackendsFailed(f"{model.name}: all backends failed ({last_error})")
+    raise _chain_exhausted(model, attempted_backends, last_error)
+
+
+def _chain_exhausted(
+    model: LogicalModel, attempted: list[str], last_error: str
+) -> BackendUnavailable:
+    """Name the failure after what was actually attempted (issue #114)."""
+    if len(attempted) > 1:
+        return AllBackendsFailed(
+            f"{model.name}: all {len(attempted)} backends failed ({last_error})"
+        )
+    if attempted:
+        return BackendUnavailable(f"{model.name}: backend {attempted[0]} failed ({last_error})")
+    return BackendUnavailable(f"{model.name}: no backend was available ({last_error})")
 
 
 async def dispatch_resilient(
@@ -526,10 +618,12 @@ async def dispatch_stream(
     resilience guarantees use the non-streaming path.
     """
     last_error = "no backends"
+    attempted_backends: list[str] = []
     trace_attrs = trace_ctx.attrs() if trace_ctx else None
     for backend in model.backends:
         if not breakers.allow(backend):
             continue
+        attempted_backends.append(backend.name)
         try:
             first = True
             async for chunk in upstream.chat_stream(
@@ -554,6 +648,36 @@ async def dispatch_stream(
                 **request_log_fields(trace_ctx, backend=backend.name, outcome="cancelled"),
             )
             raise
+        except UpstreamStatusError as exc:
+            if not is_retryable_status(exc.status_code):
+                # Settled rejection of this body: falling back would only ask a
+                # second backend the same invalid question (issue #114).
+                breakers.record_success(backend)
+                log.warning(
+                    "stream.request_rejected",
+                    **request_log_fields(
+                        trace_ctx,
+                        backend=backend.name,
+                        outcome="request-rejected",
+                        upstream_status=exc.status_code,
+                    ),
+                )
+                raise UpstreamRequestRejected(
+                    f"{model.name}: upstream rejected the request ({exc})",
+                    status_code=exc.status_code,
+                    body=exc.body,
+                ) from exc
+            breakers.record_failure(backend)
+            last_error = str(exc)
+            log.warning(
+                "stream.transport_error",
+                **request_log_fields(
+                    trace_ctx, backend=backend.name, error=str(exc), outcome="failed"
+                ),
+            )
+            if not first:
+                raise _chain_exhausted(model, attempted_backends, last_error) from exc
+            continue
         except UpstreamError as exc:
             breakers.record_failure(backend)
             last_error = str(exc)
@@ -565,8 +689,8 @@ async def dispatch_stream(
             )
             # Only safe to fall back if nothing was emitted yet.
             if not first:
-                raise AllBackendsFailed(
+                raise BackendUnavailable(
                     f"{model.name}: stream broke mid-flight ({last_error})"
                 ) from exc
             continue
-    raise AllBackendsFailed(f"{model.name}: all backends failed ({last_error})")
+    raise _chain_exhausted(model, attempted_backends, last_error)
