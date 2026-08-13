@@ -170,3 +170,52 @@ def test_missing_registry_requires_explicit_compatibility(monkeypatch):
 
     with pytest.raises(route_registry.RouteRegistryError, match="required"):
         route_registry.initialize_route_registry()
+
+
+def test_registry_accepts_a_declared_context_window(tmp_path):
+    path = _write(
+        tmp_path,
+        {
+            "format": route_registry.REGISTRY_FORMAT,
+            "routes": [
+                {
+                    "key": "sirens-echo/deepseek",
+                    "upstream_alias": "sirens-echo/deepseek",
+                    "direct": None,
+                    "context_window": 1000000,
+                }
+            ],
+        },
+    )
+    registry = route_registry.load_route_registry(path)
+    assert registry.routes["sirens-echo/deepseek"].context_window == 1000000
+
+
+def test_registry_defaults_context_window_to_unknown(tmp_path):
+    path = _write(
+        tmp_path,
+        {
+            "format": route_registry.REGISTRY_FORMAT,
+            "routes": [{"key": "sirens-echo/deepseek", "upstream_alias": "sirens-echo/deepseek"}],
+        },
+    )
+    registry = route_registry.load_route_registry(path)
+    assert registry.routes["sirens-echo/deepseek"].context_window is None
+
+
+def test_registry_rejects_a_nonsense_context_window(tmp_path):
+    path = _write(
+        tmp_path,
+        {
+            "format": route_registry.REGISTRY_FORMAT,
+            "routes": [
+                {
+                    "key": "sirens-echo/deepseek",
+                    "upstream_alias": "sirens-echo/deepseek",
+                    "context_window": 0,
+                }
+            ],
+        },
+    )
+    with pytest.raises(route_registry.RouteRegistryError, match="context_window"):
+        route_registry.load_route_registry(path)

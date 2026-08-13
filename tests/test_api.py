@@ -1150,7 +1150,11 @@ def test_unpaired_trimmed_prompt_is_rejected_locally(client, monkeypatch):
 
     monkeypatch.setattr(upstream, "chat", refuse_chat)
     # A window small enough that any prompt trims, so the pairing check runs.
-    monkeypatch.setattr(models, "derive_num_ctx", lambda _context_length: 64)
+    monkeypatch.setattr(
+        models,
+        "derive_context_budget",
+        lambda _context_length, *, local: (64, "model_window"),
+    )
 
     response = client.post(
         "/v1/chat/completions",

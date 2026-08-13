@@ -18,6 +18,10 @@ defaults (ceiling 49152, headroom 1024): `qwen3:8b` -> 39936, `qwen3:4b` ->
 48128. The **caller can never override `num_ctx`** - upstream forces the derived
 value even if a client sends its own - which is the whole point of the proxy.
 
+`num_ctx` binds local routes only. A hosted route derives its prompt budget
+from the model, not from VRAM - see
+[context-budget-per-model.md](context-budget-per-model.md).
+
 The larger litellm-as-core re-core that supersedes this routing layer entirely
 is tracked in `coilyco-bridge/agentic-os-hardware#25` and is compatible with this
 phase-1 change.
