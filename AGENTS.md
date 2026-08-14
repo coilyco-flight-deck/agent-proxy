@@ -1,3 +1,7 @@
+---
+ward:
+  workflow: merge-remote-main
+---
 # Agent instructions - agent-proxy
 
 ## Scope
