@@ -93,3 +93,6 @@ org = "coilyco-flight-deck"
 excludes = [
     ".pre-commit-config.yaml",
 ]
+
+[tool.agentic-os.documentation-layout]
+band = "small"
