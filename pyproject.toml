@@ -95,4 +95,9 @@ excludes = [
 ]
 
 [tool.agentic-os.documentation-layout]
-band = "small"
+# Large, not small. This is the estate's model transport layer, and its docs
+# total 159k chars: 20 docs at the small cap could not hold a quarter of that.
+# Every individual doc already passes the large per-file cap, so the only work
+# left is the doc count. A sweep stamped small fleet-wide during the
+# agentic-os#1108 rollout; Kai re-picked per repo.
+band = "large"
