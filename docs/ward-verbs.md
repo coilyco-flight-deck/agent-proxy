@@ -1,8 +1,8 @@
-# Ward verb notes
+# Verb notes
 
-Rationale for the verbs in [`.ward/ward.yaml`](../.ward/ward.yaml). The file
-itself carries only its top header, because a key-sorter would drift an inline
-YAML comment away from the verb it describes.
+Rationale for the recipes in the [`justfile`](../justfile). Each recipe carries
+a one-line description, and this page holds the reasoning that does not fit
+there.
 
 ## Validation verbs
 
@@ -32,17 +32,17 @@ tower, so the CI gate runs it too.
 
 `proof` proves the 32k truncation cliff is gone through the proxy (leg 04 local
 validation). It needs the tower reachable through `TOWER=<host>` or
-`PROXY_TOWER_BASE_URL`, and `ward serve` already running.
+`PROXY_TOWER_BASE_URL`, and `just serve` already running.
 
 `reliability` is the leg-05 harness. It scores a context-growing, tool-using
 loop and reports a reliability percentage plus a failure histogram. Pass args
 after `--`, for example:
 
 ```bash
-ward exec reliability -- --target both --turns 6 --json out.json
+just reliability --target both --turns 6 --json out.json
 ```
 
-It needs the tower reachable, and `ward serve` running for the `proxy` target.
+It needs the tower reachable, and `just serve` running for the `proxy` target.
 
 ## Security policy
 
@@ -55,9 +55,9 @@ Makefile and runs its tooling through uv, matching
 [`.forgejo/workflows/ci.yml`](../.forgejo/workflows/ci.yml), which invokes the
 same commands through raw `uv run` because the CI runner has no ward.
 
-`ward exec <verb>` needs neither, so it is the supported entry point.
+`just <verb>` needs neither, so it is the supported entry point.
 
 ## See also
 
-- [`.ward/ward.yaml`](../.ward/ward.yaml) - the allowlist itself.
+- [`justfile`](../justfile) - the recipes themselves.
 - [AGENTS.md](../AGENTS.md) - which verbs agents are expected to run.

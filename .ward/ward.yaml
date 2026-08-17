@@ -1,87 +1,9 @@
-# Per-repo command allowlist for agent-proxy. Read by ward's cli-guard repocfg
-# loader for `ward exec <verb>` (and, via the unknown-verb fallback, bare
-# `ward <verb>`). Field reference:
-# https://forgejo.coilysiren.me/coilyco-flight-deck/ward/src/branch/main/docs/ward-yaml.md
+# Catalog metadata for the cross-repo knowledge graph.
 #
-# Schema note (agent-proxy#19): this file previously used the legacy flat
-# `verb: cmd` form, which the current ward (v0.359+) cannot parse - it needs a
-# top-level `commands:` map, so every `ward <verb>` silently failed to resolve.
-# Migrated here so the harness invocations the docs advertise actually run.
-#
-# There is no Makefile: `ward exec` runs the `run:` argv directly, so `run: uv
-# run ...` works. Per-verb rationale, tower and daemon requirements, and the
-# empty `security:` policy live in docs/ward-verbs.md, because a key-sorter
-# would drift an inline YAML comment away from the verb it describes.
-
-commands:
-  test:
-    run: uv run --extra dev pytest
-    description: Sync dev deps and run the unit test suite (tower not required).
-  format-check:
-    run: uv run --extra dev black --check .
-    description: Check Python formatting.
-  format:
-    run: uv run --extra dev black .
-    description: Format Python sources.
-  lint:
-    run: uv run --extra dev ruff check .
-    description: Run the Python linter.
-  typecheck:
-    run: uv run --extra dev mypy app
-    description: Run the Python type checker.
-  pre-commit:
-    run: pre-commit run --all-files
-    description: Run the repository validation hooks over all files.
-  pre-commit-install:
-    run: pre-commit install --hook-type pre-commit --hook-type pre-push
-    description: Install the pre-commit and pre-push hooks into a fresh clone.
-  serve:
-    run: uv run uvicorn app.main:app --port 8080
-    description: Serve the proxy on 127.0.0.1:8080.
-  sync:
-    run: uv run uv sync
-    description: Sync the app + dev dependencies.
-  schema:
-    run: uv run python scripts/export_trajectory_schema.py
-    description: Regenerate the committed trajectory contract JSON Schema.
-  litellm-parity:
-    run: uv run python scripts/litellm_parity.py
-    description: Compare the current Agent Proxy surface with a standalone LiteLLM candidate.
-  trajectory-evidence:
-    run: uv run python scripts/trajectory_evidence.py
-    description: Prove a durable trajectory ledger through online backup and replay.
-  trajectory-query:
-    run: uv run agent-proxy-query
-    description: Read and filter governed trajectory evidence through Agent Proxy.
-  ingest-agent-compose:
-    run: uv run python scripts/ingest_agent_compose.py
-    description: Ingest one verified agent-compose bundle into the durable trajectory store.
-  ingest-guard-data:
-    run: uv run python scripts/ingest_guard_data.py
-    description: Ingest cli-guard audit rows and specgen policy evidence.
-
-  test-container:
-    run: bash ./test-container.sh
-    description: Build the image and assert it boots + serves the three endpoints (needs a Docker daemon).
-  boot-probe:
-    run: bash ./boot_probe.sh
-    description: Daemonless boot probe against the frozen runtime deps.
-
-  smoke:
-    run: bash ./test-fixes.sh
-    description: Daemonless import/build smoke (runtime deps locked, app imports clean).
-
-  proof:
-    run: uv run python scripts/truncation_proof.py
-    description: Prove the 32k truncation cliff is gone through the proxy (needs the tower + a running proxy).
-
-  burst-probe:
-    run: uv run python scripts/burst_probe.py
-    description: Concurrency burst against a running proxy - queue or shed (needs --yes, spends tokens).
-
-  reliability:
-    run: uv run python scripts/reliability_loop.py
-    description: Reliability harness - score a context-growing, tool-using loop and report a reliability percentage.
+# Dev verbs used to live here as a `commands:` block. They are recipes in the
+# justfile now. This file survives only because check_catalog_block pins this
+# exact path and catalog-trifecta wants README, AGENTS, and FEATURES to link
+# it, both upstream in agentic-os.
 
 security: {}
 

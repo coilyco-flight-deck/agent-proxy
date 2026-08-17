@@ -25,14 +25,14 @@ target:
 
 ```bash
 # 1. start the proxy (a second shell); resolves the tower FQDN from SSM if unset
-PROXY_TOWER_BASE_URL=http://<tower>:11434 ward exec serve
+PROXY_TOWER_BASE_URL=http://<tower>:11434 just serve
 
 # 2. run both targets in one pass and write the durable artifact
-TOWER=<tower> ward exec reliability -- --target both --turns 6 --json docs/reliability_m2.json
+TOWER=<tower> just reliability --target both --turns 6 --json docs/reliability_m2.json
 ```
 
-`ward exec reliability` runs `scripts/reliability_loop.py`; bare
-`ward reliability` also works via ward's unknown-verb fallback. Args ride after
+`just reliability` runs `scripts/reliability_loop.py`; bare
+`just reliability` also works via ward's unknown-verb fallback. Args ride after
 `--`. The tower FQDN is resolved at runtime and never written into the artifact
 or this file.
 

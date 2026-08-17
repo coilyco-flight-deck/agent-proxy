@@ -52,5 +52,5 @@ producer or consumer can replay the same fixtures as its compatibility gate.
 
 ## Schema export
 
-`ward exec schema` regenerates the committed JSON Schema from the Pydantic
+`just schema` regenerates the committed JSON Schema from the Pydantic
 models. A clean regeneration is required whenever the package changes.

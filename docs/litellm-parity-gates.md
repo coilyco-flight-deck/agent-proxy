@@ -5,7 +5,7 @@ Part of [litellm-parity](litellm-parity.md).
 ## Executable parity gate
 
 
-`ward exec litellm-parity -- --baseline-url URL --candidate-url URL --model TAG`
+`just litellm-parity --baseline-url URL --candidate-url URL --model TAG`
 compares the current public surface with a candidate. It checks:
 
 * live model discovery

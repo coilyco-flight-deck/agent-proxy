@@ -24,7 +24,7 @@ audit event links that snapshot through attributes and provenance.
 Run the importer through Ward:
 
 ```text
-ward exec ingest-guard-data -- \
+just ingest-guard-data \
   --db <trajectory.sqlite3> \
   --audit-jsonl <ward-audit.jsonl> \
   --specgen-root <specgen-project>

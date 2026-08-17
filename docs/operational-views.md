@@ -9,10 +9,10 @@ Agent Proxy exposes internal cold-path views under
 Use the repository-owned helper for deterministic filtering and cross-view joins:
 
 ```text
-ward exec trajectory-query -- --help
-ward exec trajectory-query -- investigate --issue owner/repository#42
-ward exec trajectory-query -- harness-fit --harness codex --model logical/model
-ward exec trajectory-query -- skill-use --skill coding-python --role engineer
+just trajectory-query --help
+just trajectory-query investigate --issue owner/repository#42
+just trajectory-query harness-fit --harness codex --model logical/model
+just trajectory-query skill-use --skill coding-python --role engineer
 ```
 
 `investigate` accepts exact repository, issue, workflow, and trajectory filters,

@@ -6,20 +6,18 @@ Part of [proxy](proxy.md).
 
 
 ```
-ward exec sync                                             # uv sync (installs app + dev)
-PROXY_TOWER_BASE_URL=http://<tower>:11434 ward exec serve  # proxy on 127.0.0.1:8080
-ward exec test                                             # offline suite, tower not required
+just sync                                             # uv sync (installs app + dev)
+PROXY_TOWER_BASE_URL=http://<tower>:11434 just serve  # proxy on 127.0.0.1:8080
+just test                                             # offline suite, tower not required
 
 # compatibility-mode proof with the proxy and tower reachable:
-TOWER=<tower> MODEL=qwen3-coder:30b ward exec proof        # 32767 (direct) vs num_ctx-injected (proxy)
-TOWER=<tower> MODEL=qwen3-coder:30b ward exec reliability -- --target both --turns 6 --json reliability.json
+TOWER=<tower> MODEL=qwen3-coder:30b just proof        # 32767 (direct) vs num_ctx-injected (proxy)
+TOWER=<tower> MODEL=qwen3-coder:30b just reliability --target both --turns 6 --json reliability.json
 ```
 
-The invocation is `ward exec <verb>`, defined in `.ward/ward.yaml`. Bare
-`ward <verb>` also resolves (ward's unknown-verb fallback rewrites it to
-`ward exec <verb>`), but the explicit `exec` form is unambiguous and is what
-these docs use. Script arguments ride after a `--` so ward hands them to the
-verb rather than parsing them itself.
+The invocation is `just <verb>`, defined in the `justfile`. Script arguments
+ride directly after the verb, because `set positional-arguments` forwards them
+to the recipe verbatim.
 
 `scripts/truncation_proof.py` reproduces the leg-01 truncation test through the
 proxy. `scripts/reliability_loop.py` is the leg-05 reliability harness: it scores

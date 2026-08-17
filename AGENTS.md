@@ -34,16 +34,16 @@ The aosh build documents remain evidence for the delivered reliability behavior.
 
 ## Commands
 
-Route development commands through Ward, which reads [`.ward/ward.yaml`](.ward/ward.yaml). Use `ward exec <verb>` rather than bare `uv`, `pytest`, or `docker`.
+Route development commands through the [`justfile`](justfile). Use `just <verb>` rather than bare `uv`, `pytest`, or `docker`.
 
-There is no Makefile. `ward exec` runs each `run:` argv directly through uv.
+There is no Makefile. Each recipe runs its command directly through uv.
 
 ## Validation
 
-- `ward exec format-check`, `ward exec lint`, `ward exec typecheck`, and `ward exec test` are the offline gates.
-- `ward exec pre-commit` runs the catalog suite over all tracked files. Never pass `--no-verify`.
-- A fresh clone has no hooks in `.git/hooks`. Run `ward exec pre-commit-install` once per clone before relying on the commit-time gate.
-- `ward exec test-container` needs a Docker daemon. `ward exec boot-probe` is the daemonless equivalent.
+- `just format-check`, `just lint`, `just typecheck`, and `just test` are the offline gates.
+- `just pre-commit` runs the catalog suite over all tracked files. Never pass `--no-verify`.
+- A fresh clone has no hooks in `.git/hooks`. Run `just pre-commit-install` once per clone before relying on the commit-time gate.
+- `just test-container` needs a Docker daemon. `just boot-probe` is the daemonless equivalent.
 
 ## Safety
 
@@ -59,7 +59,7 @@ There is no Makefile. `ward exec` runs each `run:` argv directly through uv.
 
 ## Release
 
-`.ward/ward.yaml` declares `workflow: merge-remote-main`. Canonical history lives on Forgejo.
+This file's frontmatter declares `workflow: merge-remote-main`. Canonical history lives on Forgejo.
 
 Do not claim an architecture-v2 component is landed until code and verification land, and keep [`docs/FEATURES.md`](docs/FEATURES.md) current when a shipped capability changes.
 

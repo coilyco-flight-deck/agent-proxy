@@ -16,7 +16,7 @@ Span data cannot tell them apart at that load. One burst can.
 
 ## Running it
 
-`ward exec burst-probe -- --base-url http://ser8:8080 --model <route> --yes`
+`just burst-probe --base-url http://ser8:8080 --model <route> --yes`
 
 It **issues real model calls and costs real tokens**, so it refuses to start
 without `--yes` and names the call count in the refusal. Defaults are the method

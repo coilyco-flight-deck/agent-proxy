@@ -22,11 +22,11 @@ never written into the artifact.
 
 Usage::
 
-    TOWER=<host> ward exec reliability -- --target both --turns 6 --json out.json
-    TOWER=<host> ward exec reliability -- --target proxy --turns 6
+    TOWER=<host> just reliability --target both --turns 6 --json out.json
+    TOWER=<host> just reliability --target proxy --turns 6
 
-(``ward exec reliability`` and, via the unknown-verb fallback, bare
-``ward reliability`` both resolve to this script; args ride after ``--``.)
+(``just reliability`` and, via the unknown-verb fallback, bare
+``just reliability`` both resolve to this script; args ride after ``--``.)
 """
 
 from __future__ import annotations

@@ -21,7 +21,7 @@ not execution authority. Consumers must not infer permission from them.
 Run the cold-path importer through Ward:
 
 ```text
-ward exec ingest-agent-compose -- \
+just ingest-agent-compose \
   --bundle <verified-bundle-dir> \
   --db <trajectory.sqlite3>
 ```

@@ -1603,7 +1603,7 @@ async def _completions(body: dict[str, Any], headers) -> Response:
 
 def main() -> None:
     """Serve ``app`` under hypercorn - the container CMD (``python -m app.main``)
-    and the ``agent-proxy`` console script both land here. ``ward serve`` runs the
+    and the ``agent-proxy`` console script both land here. ``just serve`` runs the
     same ``app`` object under uvicorn instead. Hypercorn drives the ASGI lifespan,
     so the queue starts and stops with the server."""
     import asyncio

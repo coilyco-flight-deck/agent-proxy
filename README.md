@@ -83,30 +83,30 @@ viewing flow are defined in
 Run tests and quality checks through Ward:
 
 ```bash
-ward exec test
-ward exec lint
-ward exec typecheck
-ward exec format-check
-ward exec pre-commit
-ward exec boot-probe
-ward exec smoke
+just test
+just lint
+just typecheck
+just format-check
+just pre-commit
+just boot-probe
+just smoke
 ```
 
-`ward exec pre-commit` runs the full validation suite over every tracked file.
-A fresh clone has no hooks wired into `.git/hooks`, so run `ward exec
+`just pre-commit` runs the full validation suite over every tracked file.
+A fresh clone has no hooks wired into `.git/hooks`, so run `just
 pre-commit-install` once per clone to get the pre-commit and pre-push gates.
 
 Run the current proxy or its container acceptance test:
 
 ```bash
-ward exec serve
-ward exec test-container
+just serve
+just test-container
 ```
 
 Inspect governed trajectory evidence without mutating Agent Proxy:
 
 ```bash
-ward exec trajectory-query -- --help
+just trajectory-query --help
 ```
 
 The proxy uses port 8080 by default. Set `PROXY_HOST`, `PROXY_PORT`, or `LOG_LEVEL` to override its host, port, or log level.
@@ -118,8 +118,8 @@ with `PROXY_MCP_ALLOWED_HOSTS` and put authenticated ingress in front of
 
 ## Container validation
 
-- `ward exec test-container` needs a Docker daemon. It builds the image, starts it, and probes `/healthz`, `/v1/models`, and `/metrics`.
-- `ward exec boot-probe` is daemonless. It reproduces the Dockerfile installation and command path, then probes the same endpoints.
+- `just test-container` needs a Docker daemon. It builds the image, starts it, and probes `/healthz`, `/v1/models`, and `/metrics`.
+- `just boot-probe` is daemonless. It reproduces the Dockerfile installation and command path, then probes the same endpoints.
 
 ## Planning
 

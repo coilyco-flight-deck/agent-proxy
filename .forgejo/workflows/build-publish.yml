@@ -23,7 +23,7 @@ jobs:
       image: forgejo.coilysiren.me/coilyco-flight-deck/agentic-os:release
     steps:
       - uses: actions/checkout@v4
-      - name: Tests (ward test)
+      - name: Tests (just test)
         run: ./scripts/test.sh
       - name: Lint (ruff)
         run: .venv/bin/ruff check .
@@ -31,9 +31,9 @@ jobs:
         run: .venv/bin/black --check .
       - name: Types (mypy)
         run: .venv/bin/mypy app
-      - name: Daemonless boot probe (ward boot-probe)
+      - name: Daemonless boot probe (just boot-probe)
         run: ./boot_probe.sh
-      - name: Import/build smoke (ward smoke)
+      - name: Import/build smoke (just smoke)
         run: ./test-fixes.sh
       - name: Alert Telegram on main failure
         if: ${{ failure() && github.ref == 'refs/heads/main' }}
