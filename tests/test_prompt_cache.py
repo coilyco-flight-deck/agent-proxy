@@ -399,3 +399,40 @@ def test_request_shape_reports_zero_for_a_toolless_turn():
         "gen_ai.request.tool_count": 0,
         "gen_ai.request.tool_bytes": 0,
     }
+
+
+# The served model, which agentproxy.backend cannot answer for a proxied route.
+# coilyco-flight-deck/agent-proxy#136.
+
+
+def test_result_span_records_the_model_that_answered():
+    exporter = InMemorySpanExporter()
+    tracer = _isolated_tracer(exporter)
+
+    result = UpstreamResult(
+        model="deepseek-ai/DeepSeek-V4-Flash-0731",
+        content="Paris",
+        prompt_eval_count=42,
+        eval_count=3,
+        served_by="litellm",
+        served_regime="hosted",
+    )
+    with tracer.start_as_current_span("upstream.chat") as span:
+        upstream.set_result_span_attributes(span, result)
+
+    attributes = exporter.get_finished_spans()[-1].attributes
+    # The proxy's own chain entry and the model that answered are different
+    # facts, and a LiteLLM fallback only moves the second one.
+    assert attributes["agentproxy.backend"] == "litellm"
+    assert attributes["gen_ai.response.model"] == "deepseek-ai/DeepSeek-V4-Flash-0731"
+
+
+def test_result_span_omits_the_model_when_upstream_named_none():
+    exporter = InMemorySpanExporter()
+    tracer = _isolated_tracer(exporter)
+
+    result = UpstreamResult(model="", content="Paris", prompt_eval_count=1, eval_count=1)
+    with tracer.start_as_current_span("upstream.chat") as span:
+        upstream.set_result_span_attributes(span, result)
+
+    assert "gen_ai.response.model" not in exporter.get_finished_spans()[-1].attributes
