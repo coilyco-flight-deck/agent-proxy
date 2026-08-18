@@ -205,6 +205,10 @@ def set_result_span_attributes(span: Any, result: UpstreamResult) -> None:
     if result.served_by:
         span.set_attribute("agentproxy.backend", result.served_by)
         span.set_attribute("agentproxy.backend.regime", result.served_regime)
+    # agentproxy.backend names this proxy's chain entry. For an upstream-alias
+    # route that is one hop, so only the response says which model answered.
+    if result.model:
+        span.set_attribute("gen_ai.response.model", result.model)
     span.set_attribute("gen_ai.usage.input_tokens", result.prompt_eval_count)
     span.set_attribute("gen_ai.usage.output_tokens", result.eval_count)
     span.set_attribute(
