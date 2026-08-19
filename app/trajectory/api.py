@@ -42,8 +42,10 @@ def _operational_builder() -> OperationalViewBuilder:
     path = get_settings().trajectory_db_path
     raw = get_trajectory_store()
     derived = MaterializationStore(path)
-    trajectories = materialize_retained_events(raw, derived)
+    # One read feeds both halves: twice cost double and could straddle an
+    # ingest, leaving the halves disagreeing about which events exist (#142).
     events = tuple(raw.iter_events())
+    trajectories = materialize_retained_events(raw, derived, events=events)
     evaluation_store = EvaluationStore(path)
     evaluations = evaluation_store.save_all(assemble_evaluation_records(events, trajectories))
     return OperationalViewBuilder(trajectories, evaluations)
