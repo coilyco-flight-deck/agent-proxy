@@ -483,8 +483,17 @@ def materialize_retained_events(
     derived_store: MaterializationStore,
     *,
     allowed_lateness: timedelta = timedelta(minutes=5),
+    events: tuple[TrajectoryEvent, ...] | None = None,
 ) -> tuple[MaterializedTrajectory, ...]:
-    """Rebuild and append changed derived revisions from immutable raw events."""
+    """Rebuild and append changed derived revisions from immutable raw events.
+
+    ``events`` lets a caller that already holds the ledger hand it over rather
+    than paying a second full read. Passing the same tuple it goes on to use
+    also pins both halves to one snapshot, where two reads could straddle an
+    ingest and disagree about which events exist (#142).
+    """
 
     materializer = TrajectoryMaterializer(allowed_lateness=allowed_lateness)
-    return derived_store.save_all(materializer.materialize(tuple(raw_store.iter_events())))
+    if events is None:
+        events = tuple(raw_store.iter_events())
+    return derived_store.save_all(materializer.materialize(events))
