@@ -142,14 +142,22 @@ app = FastAPI(title="agent-proxy", lifespan=lifespan)
 app.include_router(trajectory_router)
 
 
-def _instrument_fastapi(application: FastAPI) -> None:
-    """Install inbound tracing before Starlette freezes the middleware stack."""
+def _instrument_fastapi(application: FastAPI, tracer_provider: Any = None) -> None:
+    """Install inbound tracing before Starlette freezes the middleware stack.
+
+    ``tracer_provider`` is for tests, which need a throwaway app on their own
+    exporter. Production passes nothing and takes the global provider.
+    """
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
         FastAPIInstrumentor.instrument_app(
             application,
             excluded_urls=HEALTH_TRACE_EXCLUDED_URLS,
+            tracer_provider=tracer_provider,
+            # One ASGI send is one SSE frame, so the default `http send` child
+            # span made a streamed turn cost a span per chunk (#140).
+            exclude_spans=["send"],
         )
     except Exception:
         # Observability remains best-effort and must never block process startup.
@@ -653,6 +661,50 @@ def _stream_chat_response(
     }
 
 
+class StreamAccounting:
+    """Per-stream totals carried as span attributes rather than per-chunk spans.
+
+    Chunk-level spans cost one span per SSE frame and say nothing individually,
+    which buried real work past the backend's per-trace span cap (#140). The
+    same four numbers live here instead. Rationale: docs/stream-accounting.md.
+    """
+
+    def __init__(self, started: float) -> None:
+        self._started = started
+        self._first_token: float | None = None
+        self.frames = 0
+        self.bytes = 0
+
+    def record(self, frame: str) -> str:
+        """Count one SSE frame on its way to the caller and hand it back."""
+
+        self.frames += 1
+        self.bytes += len(frame.encode("utf-8"))
+        return frame
+
+    def mark_first_token(self) -> None:
+        """Stamp the first frame carrying generated content or reasoning."""
+
+        if self._first_token is None:
+            self._first_token = time.perf_counter()
+
+    def attributes(self) -> dict[str, float | int]:
+        """Return the stream shape, measured from request receipt."""
+
+        attrs: dict[str, float | int] = {
+            "agentproxy.stream.frames": self.frames,
+            "agentproxy.stream.bytes": self.bytes,
+            "agentproxy.stream.duration_ms": max(0.0, (time.perf_counter() - self._started) * 1000),
+        }
+        # Absent rather than zero when a stream died before generating: an
+        # unreported first token and an instant one are not the same event.
+        if self._first_token is not None:
+            attrs["agentproxy.stream.first_token_ms"] = max(
+                0.0, (self._first_token - self._started) * 1000
+            )
+        return attrs
+
+
 # Emitted while a state persists so a caller can tell a slow turn from a hung
 # one. Wire shape and rationale: docs/sse-heartbeats.md.
 _KEEPALIVE = object()
@@ -734,6 +786,7 @@ async def _stream_chat(
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     tracer = get_tracer()
+    stream = StreamAccounting(started)
 
     async def gen() -> AsyncIterator[str]:
         base = {
@@ -750,6 +803,16 @@ async def _stream_chat(
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_calls: dict[int, dict[str, Any]] = {}
+
+        def close_span() -> None:
+            """Stamp the stream totals, then end the span on every exit path."""
+
+            if terminal_span is not None:
+                for name, value in stream.attributes().items():
+                    terminal_span.set_attribute(name, value)
+            if span_cm is not None:
+                span_cm.__exit__(None, None, None)
+
         try:
             if span_cm is not None:
                 terminal_span = span_cm.__enter__()
@@ -764,7 +827,7 @@ async def _stream_chat(
                 **base,
                 "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
             }
-            yield f"data: {json.dumps(first)}\n\n"
+            yield stream.record(f"data: {json.dumps(first)}\n\n")
 
             heartbeat_state: dict[str, Any] = {"state": "accepted"}
             async for chunk in _with_keepalives(
@@ -779,11 +842,13 @@ async def _stream_chat(
                 get_settings().heartbeat_interval,
             ):
                 if chunk is _KEEPALIVE:
-                    yield _heartbeat(model.name, terminal_span, dict(heartbeat_state))
+                    yield stream.record(
+                        _heartbeat(model.name, terminal_span, dict(heartbeat_state))
+                    )
                     continue
                 if state := chunk.get(resilience.STREAM_STATE_KEY):
                     heartbeat_state = dict(state)
-                    yield _heartbeat(model.name, terminal_span, state)
+                    yield stream.record(_heartbeat(model.name, terminal_span, state))
                     continue
                 msg = chunk.get("message") or {}
                 response_delta: dict[str, Any] = {}
@@ -803,11 +868,12 @@ async def _stream_chat(
                         raw_tool_calls, tool_calls
                     )
                 if response_delta:
+                    stream.mark_first_token()
                     delta = {
                         **base,
                         "choices": [{"index": 0, "delta": response_delta, "finish_reason": None}],
                     }
-                    yield f"data: {json.dumps(delta)}\n\n"
+                    yield stream.record(f"data: {json.dumps(delta)}\n\n")
                 if chunk.get("done"):
                     finish = "length" if chunk.get("done_reason") == "length" else "stop"
                     terminal_result = upstream.parse_stream_result(chunk, model_name)
@@ -846,8 +912,7 @@ async def _stream_chat(
                 )
                 _emit_request_terminal(lifecycle, "cancelled", started=started)
             finally:
-                if span_cm is not None:
-                    span_cm.__exit__(None, None, None)
+                close_span()
             raise
         except UpstreamRequestRejected as exc:
             record_error("upstream_request_rejected", terminal_span)
@@ -866,8 +931,7 @@ async def _stream_chat(
             finish = "stop"
             outcome = "failed"
         except BodyCaptureError:
-            if span_cm is not None:
-                span_cm.__exit__(None, None, None)
+            close_span()
             raise
         except Exception:
             try:
@@ -889,8 +953,7 @@ async def _stream_chat(
                     reason="stream_failed",
                 )
             finally:
-                if span_cm is not None:
-                    span_cm.__exit__(None, None, None)
+                close_span()
             raise
         try:
             response_body = _stream_chat_response(
@@ -925,11 +988,10 @@ async def _stream_chat(
                 result=terminal_result,
             )
             final = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
-            yield f"data: {json.dumps(final)}\n\n"
-            yield "data: [DONE]\n\n"
+            yield stream.record(f"data: {json.dumps(final)}\n\n")
+            yield stream.record("data: [DONE]\n\n")
         finally:
-            if span_cm is not None:
-                span_cm.__exit__(None, None, None)
+            close_span()
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
