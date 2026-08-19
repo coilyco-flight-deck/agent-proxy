@@ -380,6 +380,34 @@ def _chat_body(
     return body
 
 
+def _fold_stream_usage(
+    result: UpstreamResult | None,
+    payload: dict[str, Any],
+    fallback_model: str,
+) -> UpstreamResult:
+    """Carry a usage-only trailing chunk onto the terminal result.
+
+    An OpenAI-dialect stream asked for usage answers with a final chunk whose
+    choice has an empty delta and no ``finish_reason``, so the accounting arrives
+    after the chunk that ends the message. Keyed on ``finish_reason`` alone it is
+    dropped, which is what left the streaming route unmeasured in issue #138.
+    """
+
+    usage = payload.get("usage") or {}
+    reported, read, write = parse_cache_usage(usage)
+    return UpstreamResult(
+        model=str((result.model if result else "") or payload.get("model") or fallback_model),
+        content="",
+        prompt_eval_count=int(usage.get("prompt_tokens", 0) or 0),
+        eval_count=int(usage.get("completion_tokens", 0) or 0),
+        done_reason=result.done_reason if result else "stop",
+        cache_usage_reported=reported,
+        cache_read_tokens=read,
+        cache_write_tokens=write,
+        raw=payload,
+    )
+
+
 def _chat_path(backend: Backend) -> str:
     if backend.chat_path:
         return backend.chat_path
@@ -672,6 +700,12 @@ async def chat_stream(
                         cache_read_tokens=cache_read,
                         cache_write_tokens=cache_write,
                         raw=payload,
+                    )
+                elif payload.get("usage"):
+                    # Usage arrives in a trailing chunk of its own, after the
+                    # finish_reason one. See docs/proxy-prompt-cache.md.
+                    terminal_result = _fold_stream_usage(
+                        terminal_result, payload, backend.ollama_tag
                     )
                 yield out
         if span_cm is not None and terminal_result is not None:

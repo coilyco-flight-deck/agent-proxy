@@ -475,3 +475,64 @@ def test_ollama_streaming_does_not_send_stream_options():
     backend = Backend(name="local", url="http://local", ollama_tag="qwen3:4b", dialect="ollama")
 
     assert "stream_options" not in _body(backend, stream=True)
+
+
+# The usage-only trailing chunk (issue #138)
+
+
+def _sse(payload: dict) -> str:
+    return "data: " + json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_streaming_reads_usage_from_a_trailing_chunk(monkeypatch):
+    """LiteLLM's real shape: finish_reason first, usage in a later chunk of its own.
+
+    Captured from ser8 on 2026-08-19. Keyed on finish_reason alone the accounting
+    is dropped, which is what left the route unmeasured.
+    """
+
+    backend = Backend(name="gateway", url="http://gateway", ollama_tag="alias", dialect="openai")
+    lines = [
+        _sse({"choices": [{"index": 0, "delta": {"content": "ok"}}]}),
+        _sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
+        _sse(
+            {
+                "model": "sirens-echo/deepseek",
+                "choices": [{"index": 0, "delta": {}}],
+                "usage": {
+                    "prompt_tokens": 85,
+                    "completion_tokens": 20,
+                    "prompt_tokens_details": {"cached_tokens": 64},
+                },
+            }
+        ),
+    ]
+    monkeypatch.setattr(upstream, "get_client", lambda: _StreamingClient(lines))
+    exporter = InMemorySpanExporter()
+    monkeypatch.setattr(upstream, "get_tracer", lambda: _isolated_tracer(exporter))
+
+    [chunk async for chunk in upstream.chat_stream(backend, 1024, [], span_attrs=None)]
+
+    span = next(s for s in exporter.get_finished_spans() if s.name == "upstream.chat_stream")
+    assert span.attributes["gen_ai.usage.input_tokens"] == 85
+    assert span.attributes["gen_ai.usage.cache_read_input_tokens"] == 64
+
+
+@pytest.mark.asyncio
+async def test_streaming_without_a_usage_chunk_still_reports_nothing(monkeypatch):
+    """A provider that accounts for nothing stays absent rather than reading zero."""
+
+    backend = Backend(name="gateway", url="http://gateway", ollama_tag="alias", dialect="openai")
+    lines = [
+        _sse({"choices": [{"index": 0, "delta": {"content": "ok"}}]}),
+        _sse({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
+    ]
+    monkeypatch.setattr(upstream, "get_client", lambda: _StreamingClient(lines))
+    exporter = InMemorySpanExporter()
+    monkeypatch.setattr(upstream, "get_tracer", lambda: _isolated_tracer(exporter))
+
+    [chunk async for chunk in upstream.chat_stream(backend, 1024, [], span_attrs=None)]
+
+    span = next(s for s in exporter.get_finished_spans() if s.name == "upstream.chat_stream")
+    assert "gen_ai.usage.cache_read_input_tokens" not in span.attributes
