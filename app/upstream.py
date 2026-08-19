@@ -367,6 +367,10 @@ def _chat_body(
             body["options"] = dict(options)
     else:
         body.update(_openai_options(options))
+        # OpenAI-compatible streaming omits the usage block unless asked, and the
+        # cache attributes derive from it. See docs/proxy-prompt-cache.md.
+        if stream:
+            body["stream_options"] = {"include_usage": True}
         if inject:
             body["num_ctx"] = num_ctx
         if metadata := _gateway_metadata(span_attrs):

@@ -436,3 +436,42 @@ def test_result_span_omits_the_model_when_upstream_named_none():
         upstream.set_result_span_attributes(span, result)
 
     assert "gen_ai.response.model" not in exporter.get_finished_spans()[-1].attributes
+
+
+# stream_options.include_usage
+
+
+def _body(backend, *, stream):
+    return upstream._chat_body(
+        backend,
+        1024,
+        [],
+        stream=stream,
+        tools=None,
+        options=None,
+        span_attrs=None,
+    )
+
+
+def test_openai_streaming_asks_the_provider_for_usage():
+    """Without this the terminal chunk carries no usage, so no cache field exists
+    to parse and the route reports silence that reads as a 100% miss."""
+
+    backend = Backend(name="gateway", url="http://gateway", ollama_tag="alias", dialect="openai")
+
+    assert _body(backend, stream=True)["stream_options"] == {"include_usage": True}
+
+
+def test_openai_non_streaming_does_not_send_stream_options():
+    backend = Backend(name="gateway", url="http://gateway", ollama_tag="alias", dialect="openai")
+
+    assert "stream_options" not in _body(backend, stream=False)
+
+
+def test_ollama_streaming_does_not_send_stream_options():
+    """Ollama accounts for its own stream in the done payload and rejects unknown
+    top-level keys, so the OpenAI-only option must not reach it."""
+
+    backend = Backend(name="local", url="http://local", ollama_tag="qwen3:4b", dialect="ollama")
+
+    assert "stream_options" not in _body(backend, stream=True)
