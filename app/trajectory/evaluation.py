@@ -306,13 +306,24 @@ class EvaluationStore:
 
     def save(self, record: EvaluationRecord) -> EvaluationRecord:
         self.initialize()
+        connection = self._connect()
+        try:
+            return self._save_on(connection, record)
+        finally:
+            connection.close()
+
+    def _save_on(
+        self, connection: sqlite3.Connection, record: EvaluationRecord
+    ) -> EvaluationRecord:
+        """Append one record on a caller-owned connection, so a batch connects once."""
+
         raw = json.dumps(
             record.model_dump(mode="json"),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
         ).encode("utf-8")
-        with self._connect() as connection:
+        with connection:
             existing = connection.execute(
                 "SELECT content_sha256, record FROM evaluation_records WHERE evaluation_id = ?",
                 (record.evaluation_id,),
@@ -348,7 +359,16 @@ class EvaluationStore:
         return record
 
     def save_all(self, records: tuple[EvaluationRecord, ...]) -> tuple[EvaluationRecord, ...]:
-        return tuple(self.save(record) for record in records)
+        """Append a batch over one connection, for the same reason as the sibling store."""
+
+        if not records:
+            return ()
+        self.initialize()
+        connection = self._connect()
+        try:
+            return tuple(self._save_on(connection, record) for record in records)
+        finally:
+            connection.close()
 
     def for_trajectory(self, trajectory_id: str) -> tuple[EvaluationRecord, ...]:
         self.initialize()
