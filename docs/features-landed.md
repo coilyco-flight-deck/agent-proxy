@@ -17,6 +17,12 @@ Part of [FEATURES](FEATURES.md).
 - **Backend-derived context safety** - landed - safe `num_ctx` derivation and injection, `OLLAMA_NUM_PARALLEL` compensation, context-budget trimming, and loud delivered-context truncation detection.
 - **Current gateway resilience** - landed - bounded in-memory queue and workers, queue backpressure, structural response validation, retry with backoff, fallback chains, and per-backend circuit breakers. Validation rejects only structurally broken output (empty, unparsable tool arguments, truncation garbage, degenerate repetition); it does not judge the meaning of assistant text.
 - **Operational evidence** - landed - trace-correlated structured JSON logs, Prometheus metrics, OpenTelemetry traces, closed-set SigNoz exception events for every handled runtime failure under a bounded 13-code taxonomy with stage tags, Sentry initialization, request spans, and Ollama final-response token plus phase-duration measurements for streaming and non-streaming requests.
+- **Stream accounting instead of chunk spans** - landed - a streamed completion
+  emits no per-SSE-chunk `http send` span. Frame count, bytes, total duration,
+  and first-token latency ride on the request span instead, so a trace holding a
+  streamed turn stays under the backend's per-trace span cap and still renders
+  the work an operator opened it for. See
+  [stream-accounting.md](stream-accounting.md).
 - **Opt-in complete model I/O capture** - landed - complete normalized request
   and response bodies for non-streaming chat, reconstructed streaming chat,
   text completions, and MCP prompt calls are written to paired structured events

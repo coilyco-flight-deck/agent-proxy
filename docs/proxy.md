@@ -23,6 +23,7 @@ documents already link to.
 - [Request deadline and abandoned work](request-deadline.md)
 - [Backend identity and operating regime](backend-regime.md)
 - [SSE heartbeats](sse-heartbeats.md)
+- [Stream accounting](stream-accounting.md)
 - [Saturation failover](saturation-failover.md)
 - [Saturation stickiness](saturation-stickiness.md)
 - [Caller backend preference](prefer-backend.md)
