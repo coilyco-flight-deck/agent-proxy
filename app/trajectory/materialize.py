@@ -346,8 +346,24 @@ class MaterializationStore:
 
     def save(self, record: MaterializedTrajectory) -> MaterializedTrajectory:
         self.initialize()
+        connection = self._connect()
+        try:
+            return self._save_on(connection, record)
+        finally:
+            connection.close()
+
+    def _save_on(
+        self, connection: sqlite3.Connection, record: MaterializedTrajectory
+    ) -> MaterializedTrajectory:
+        """Append one revision on a caller-owned connection.
+
+        Split out so a batch pays one connect instead of one per record. The
+        per-record transaction is unchanged: `with connection` commits without
+        closing, leaving the next BEGIN IMMEDIATE a clean start.
+        """
+
         semantic = _semantic_digest(record)
-        with self._connect() as connection:
+        with connection:
             connection.execute("BEGIN IMMEDIATE")
             latest = connection.execute(
                 """
@@ -394,7 +410,20 @@ class MaterializationStore:
     def save_all(
         self, records: tuple[MaterializedTrajectory, ...]
     ) -> tuple[MaterializedTrajectory, ...]:
-        return tuple(self.save(record) for record in records)
+        """Append a batch over one connection.
+
+        Every operational view rebuild calls this for the whole ledger, and
+        connecting per record was the largest single cost in that path (#142).
+        """
+
+        if not records:
+            return ()
+        self.initialize()
+        connection = self._connect()
+        try:
+            return tuple(self._save_on(connection, record) for record in records)
+        finally:
+            connection.close()
 
     def latest(self, trajectory_id: str) -> MaterializedTrajectory | None:
         self.initialize()
