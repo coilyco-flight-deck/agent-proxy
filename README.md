@@ -109,6 +109,10 @@ The MCP endpoint and remote connector setup are in [docs/mcp.md](docs/mcp.md). A
 deployment must allowlist its public hostname with `PROXY_MCP_ALLOWED_HOSTS` and
 put authenticated ingress in front of `/mcp` before exposing it.
 
+## License
+
+MIT. Kai Siren holds the copyright. See [LICENSE](LICENSE).
+
 ## See also
 
 - [AGENTS.md](AGENTS.md) - agent instructions, ownership boundaries, conventions.
