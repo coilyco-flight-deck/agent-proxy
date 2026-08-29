@@ -111,7 +111,7 @@ put authenticated ingress in front of `/mcp` before exposing it.
 
 ## License
 
-MIT. Kai Siren holds the copyright. See [LICENSE](LICENSE).
+MIT. Kai Ase Siren holds the copyright. See [LICENSE](LICENSE).
 
 ## See also
 

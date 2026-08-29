@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Kai"}
+    {name = "Kai Ase Siren"}
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
