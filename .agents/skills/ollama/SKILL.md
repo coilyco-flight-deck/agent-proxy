@@ -7,4 +7,4 @@ description: Route Ollama model discovery, prompting, backend, context, or infer
 
 Treat Ollama as a physical backend behind Agent Proxy. Use the [Agent Proxy router](../repo-agent-proxy/SKILL.md) and its logical, governed surfaces instead of contacting Ollama directly.
 
-Backend-direct access is limited to Agent Proxy implementation, parity testing, or explicitly named incident isolation. Name the exception when one applies.
+Backend-direct access is limited to Agent Proxy implementation, parity testing, or explicitly specific incident isolation. Name the exception when one applies.

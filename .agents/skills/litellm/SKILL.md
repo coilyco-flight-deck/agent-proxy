@@ -7,4 +7,4 @@ description: Route LiteLLM model gateway, routing, provider, cost, or inference 
 
 Treat LiteLLM as the commodity inference gateway beneath Agent Proxy. Use the [Agent Proxy router](../repo-agent-proxy/SKILL.md) and its governed surfaces instead of contacting LiteLLM directly.
 
-Backend-direct access is limited to Agent Proxy implementation, parity testing, or explicitly named incident isolation. Name the exception when one applies.
+Backend-direct access is limited to Agent Proxy implementation, parity testing, or explicitly specific incident isolation. Name the exception when one applies.
