@@ -11,7 +11,7 @@ Use the repo-owned read-only query helper to inspect the governed `skill_fit` vi
 2. Read `observed_use` and `observed_use_count` as Ward observations, and read the selection claim separately. They are different facts and the view never merges them.
 3. Treat `selected_without_observed_use` as missing evidence, not as proof the skill went unused. An adapter that never ran produces the same form as a skill nobody invoked.
 4. Compare completion rate only beside trajectory count, retries, fallbacks, human interventions, evaluation labels, access tier, and freshness.
-5. Report unresolved evaluation disagreement rather than resolving it.
+5. Report unresolved evaluation disagreement instead of resolving it.
 6. State that the result is observational. It is not causal proof that a skill produced an outcome, and it never authorizes a Ward action.
 
 For command behavior and flags, run `just trajectory-query --help`.
