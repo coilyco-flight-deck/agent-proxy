@@ -7,6 +7,10 @@
 # Python, and ward. That lets CI skip `astral-sh/setup-uv` and invoke the repo's
 # declared commands directly.
 #
+# Every step is a justfile verb. The earlier form called scripts/test.sh and then
+# `.venv/bin/<tool>`, so lint, format and types silently depended on the test step
+# having built that .venv first.
+#
 # Deliberately NOT in this gate: test-container.sh (needs a Docker daemon) and the
 # tower-dependent scripts/truncation_proof.py + scripts/reliability_loop.py (need
 # the tower reachable). Both would break a daemonless, tower-less runner. Only the
@@ -34,13 +38,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Tests (just test)
-        run: ./scripts/test.sh
-      - name: Lint (ruff)
-        run: .venv/bin/ruff check .
-      - name: Format check (black)
-        run: .venv/bin/black --check .
-      - name: Types (mypy)
-        run: .venv/bin/mypy app
+        run: just test
+      - name: Lint (just lint)
+        run: just lint
+      - name: Format check (just format-check)
+        run: just format-check
+      - name: Types (just typecheck)
+        run: just typecheck
 
       - name: Alert Telegram on main failure
         if: ${{ failure() && github.ref == 'refs/heads/main' }}
@@ -63,9 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Daemonless boot probe (just boot-probe)
-        run: ./boot_probe.sh
+        run: just boot-probe
       - name: Import/build smoke (just smoke)
-        run: ./test-fixes.sh
+        run: just smoke
       - name: Alert Telegram on main failure
         if: ${{ failure() && github.ref == 'refs/heads/main' }}
         continue-on-error: true

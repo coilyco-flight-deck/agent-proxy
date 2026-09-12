@@ -24,17 +24,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Tests (just test)
-        run: ./scripts/test.sh
-      - name: Lint (ruff)
-        run: .venv/bin/ruff check .
-      - name: Format check (black)
-        run: .venv/bin/black --check .
-      - name: Types (mypy)
-        run: .venv/bin/mypy app
+        run: just test
+      - name: Lint (just lint)
+        run: just lint
+      - name: Format check (just format-check)
+        run: just format-check
+      - name: Types (just typecheck)
+        run: just typecheck
       - name: Daemonless boot probe (just boot-probe)
-        run: ./boot_probe.sh
+        run: just boot-probe
       - name: Import/build smoke (just smoke)
-        run: ./test-fixes.sh
+        run: just smoke
       - name: Alert Telegram on main failure
         if: ${{ failure() && github.ref == 'refs/heads/main' }}
         continue-on-error: true
