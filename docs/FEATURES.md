@@ -16,4 +16,3 @@ Status legend:
 
 - [README.md](../README.md) - human-facing intro and current charter.
 - [AGENTS.md](../AGENTS.md) - agent instructions and ownership boundaries.
-- [.ward/ward.yaml](../.ward/ward.yaml) - allowlisted commands and catalog metadata.

@@ -104,4 +104,3 @@ switching tasks, or ending a session. The remote is the only durable artifact.
 
 - [README.md](README.md) - human-facing intro and current charter.
 - [docs/FEATURES.md](docs/FEATURES.md) - inventory of what ships today.
-- [.ward/ward.yaml](.ward/ward.yaml) - allowlisted commands and catalog metadata.

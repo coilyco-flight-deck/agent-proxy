@@ -122,4 +122,3 @@ MIT. Kai Ase Siren holds the copyright. See [LICENSE](LICENSE).
 - [docs/litellm-parity.md](docs/litellm-parity.md) - the standalone decision and cutover blockers.
 - [docs/ROADMAP.md](docs/ROADMAP.md) - sequencing, without treating future work as prohibited.
 - [justfile](justfile) - every dev verb, and `just` alone lists them.
-- [.ward/ward.yaml](.ward/ward.yaml) - catalog metadata.
