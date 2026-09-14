@@ -16,6 +16,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-publish
+  cancel-in-progress: false
+
 jobs:
   gate:
     runs-on: docker
