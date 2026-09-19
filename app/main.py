@@ -19,12 +19,13 @@ from typing import Any, AsyncIterator, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from prometheus_client import CONTENT_TYPE_LATEST
 
-from . import resilience, upstream
+from . import resilience, systemone, upstream
 from .analysis import PromptPairingError, apply_context_budget
 from .body_capture import BodyCaptureError, CaptureReason, CaptureStatus, ModelBodyCapture
 from .config import get_settings
@@ -37,10 +38,12 @@ from .obs import (
     get_current_trace_span,
     get_tracer,
     is_trace_bodies_enabled,
+    llm_cost_usd_total,
     llm_prompt_tokens,
     llm_route_requests_total,
     llm_requests_total,
     llm_stream_heartbeats_total,
+    llm_upstream_latency_seconds,
     log,
     log_on_span,
     metrics_text,
@@ -1369,6 +1372,193 @@ async def _chat_completions(
         )
         record_response_status(200, request_span)
         return JSONResponse(content=response_body)
+    finally:
+        if span_cm is not None:
+            span_cm.__exit__(None, None, None)
+
+
+# Jev decision shim. Contract and telemetry: docs/systemone-shim.md.
+
+
+@app.post("/v1/systemone")
+async def systemone_decide(request: Request) -> Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return _error(400, "invalid JSON body", "invalid_request_error")
+    if not isinstance(body, dict):
+        return _error(400, "JSON body must be an object", "invalid_request_error")
+    return await _until_disconnect(request, _systemone(body, request.headers))
+
+
+def _systemone_failed(
+    lifecycle: RequestLifecycle,
+    request_span: Any | None,
+    trace_ctx: RequestTraceContext,
+    model_name: str,
+    started: float,
+    outcome: RequestOutcome,
+    metric_outcome: str,
+    status: int,
+    message: str,
+    err_type: str,
+) -> JSONResponse:
+    _emit_request_terminal(lifecycle, outcome, started=started)
+    llm_requests_total.labels(logical_model=model_name, outcome=metric_outcome).inc()
+    log_on_span(
+        request_span,
+        "request.completed",
+        "warning",
+        **trace_ctx.attrs(),
+        outcome=metric_outcome,
+        error=message,
+    )
+    return _error(status, message, err_type)
+
+
+async def _systemone(body: dict[str, Any], headers) -> Response:
+    model_name = systemone.known_model(body)
+    if not model_name:
+        return _error(404, f"unknown model '{body.get('model')}'", "model_not_found")
+    settings = get_settings()
+    caller_budget = _caller_deadline_ms(headers)
+    timeout = settings.systemone_timeout
+    caller_bound = caller_budget is not None and caller_budget < timeout
+    if caller_budget is not None:
+        timeout = min(timeout, caller_budget)
+    trace_extra = _request_trace_extra(headers)
+    request_id = (
+        headers.get("x-request-id", "")
+        or str(trace_extra.get("agentproxy.request_id", ""))
+        or str(uuid.uuid4())
+    )
+    trace_ctx = _trace_context(
+        model_name, model_name, "systemone", request_id, upstream_mode="hosted", extra=trace_extra
+    )
+    lifecycle = RequestLifecycle.from_trace_context(
+        trace_ctx, occurred_at=datetime.now(timezone.utc)
+    )
+    started = time.perf_counter()
+    llm_route_requests_total.labels(logical_model=model_name, upstream_mode="hosted").inc()
+    _emit_trajectory_event(lifecycle.action_event())
+
+    tracer = get_tracer()
+    request_span = get_current_trace_span()
+    span_cm = tracer.start_as_current_span("request.systemone") if tracer is not None else None
+    if span_cm is not None:
+        request_span = span_cm.__enter__()
+    try:
+        if request_span is not None:
+            for key, value in {
+                **trace_ctx.attrs(),
+                "agentproxy.backend": systemone.BACKEND_NAME,
+                "agentproxy.backend_dialect": systemone.BACKEND_DIALECT,
+                "agentproxy.backend.regime": systemone.BACKEND_REGIME,
+                "agentproxy.decision.questions": systemone.question_count(body),
+            }.items():
+                request_span.set_attribute(key, value)
+        log.info("request.accepted", **trace_ctx.attrs(), outcome="accepted")
+
+        def failed(outcome, metric_outcome, status, message, err_type) -> JSONResponse:
+            return _systemone_failed(
+                lifecycle,
+                request_span,
+                trace_ctx,
+                model_name,
+                started,
+                outcome,
+                metric_outcome,
+                status,
+                message,
+                err_type,
+            )
+
+        try:
+            reply = await systemone.forward(body, timeout=timeout)
+        except asyncio.CancelledError:
+            _emit_request_terminal(lifecycle, "cancelled", started=started)
+            llm_requests_total.labels(logical_model=model_name, outcome="cancelled").inc()
+            _mark_cancelled_span(request_span, "request.cancelled")
+            raise
+        except systemone.SystemOneUnavailable as exc:
+            return failed("upstream_failed", "failed", 503, str(exc), "model_unavailable")
+        except httpx.TimeoutException:
+            if caller_bound:
+                return failed(
+                    "deadline_exceeded",
+                    "deadline_exceeded",
+                    504,
+                    "request exceeded the caller's deadline",
+                    "request_deadline_exceeded",
+                )
+            return failed("upstream_failed", "failed", 504, "systemone timed out", "upstream_error")
+        except httpx.HTTPError:
+            return failed(
+                "upstream_failed",
+                "failed",
+                502,
+                "systemone is unreachable",
+                "upstream_transport_failed",
+            )
+
+        if request_span is not None:
+            request_span.set_attribute("agentproxy.upstream.status_code", reply.status_code)
+        if reply.malformed:
+            return failed(
+                "upstream_failed",
+                "failed",
+                502,
+                "systemone answered with a body that is not a JSON object",
+                "response_validation_failed",
+            )
+        if not reply.ok:
+            # A refusal is the caller's to read, and the SDKs pace a retry from
+            # the upstream's own status and headers, so both pass through.
+            rejected = 400 <= reply.status_code < 500 and reply.status_code not in (408, 429)
+            outcome: RequestOutcome = "upstream_rejected" if rejected else "upstream_failed"
+            metric_outcome = "request_rejected" if rejected else "failed"
+            record_error("upstream_request_rejected" if rejected else "upstream_5xx", request_span)
+            _emit_request_terminal(lifecycle, outcome, started=started)
+            llm_requests_total.labels(logical_model=model_name, outcome=metric_outcome).inc()
+            log_on_span(
+                request_span,
+                "request.completed",
+                "warning",
+                **trace_ctx.attrs(),
+                outcome=metric_outcome,
+                upstream_status=reply.status_code,
+            )
+            record_response_status(reply.status_code, request_span)
+            return Response(
+                content=reply.body,
+                status_code=reply.status_code,
+                media_type=reply.content_type,
+                headers=reply.headers,
+            )
+
+        result = upstream.UpstreamResult(
+            model=reply.model,
+            content="",
+            prompt_eval_count=reply.input_tokens,
+            eval_count=reply.output_tokens,
+            served_by=systemone.BACKEND_NAME,
+            served_regime=systemone.BACKEND_REGIME,
+        )
+        cost = systemone.input_cost_usd(reply.input_tokens)
+        if request_span is not None:
+            upstream.set_result_span_attributes(request_span, result)
+            request_span.set_attribute("agentproxy.cost.usd", cost)
+        llm_upstream_latency_seconds.labels(
+            logical_model=model_name, backend=systemone.BACKEND_NAME
+        ).observe(reply.elapsed_seconds)
+        llm_cost_usd_total.labels(logical_model=model_name, backend=systemone.BACKEND_NAME).inc(
+            cost
+        )
+        llm_requests_total.labels(logical_model=model_name, outcome="ok").inc()
+        _emit_request_terminal(lifecycle, "succeeded", started=started, result=result)
+        log_on_span(request_span, "request.completed", **trace_ctx.attrs(), outcome="ok")
+        record_response_status(200, request_span)
+        return Response(content=reply.body, status_code=200, media_type=reply.content_type)
     finally:
         if span_cm is not None:
             span_cm.__exit__(None, None, None)

@@ -150,6 +150,16 @@ class Settings(BaseSettings):
     backends_json: str = Field(default="")
     backends_file: str = Field(default="")
 
+    # Jev (TypeSafe System One) decision shim: docs/systemone-shim.md. The key is a
+    # mounted file path, never a value, and an unset path leaves the route on 503.
+    systemone_base_url: str = Field(default="https://api.typesafe.ai")
+    systemone_api_key_file: str = Field(default="")
+    systemone_timeout: float = Field(default=10.0, gt=0.0)
+    # USD per million input tokens. Output tokens are free at the source.
+    systemone_input_usd_per_mtok: float = Field(default=0.042, ge=0.0)
+    # Bounds the model label on metrics, since the request body picks it.
+    systemone_models: str = Field(default="jev-latest,jev-1.13.0,jev-preview")
+
     # Deploy mounts a service-local logical route registry.
     # Compatibility-mode rules: docs/context-budget-per-model.md.
     route_registry_file: str = Field(default="")
@@ -177,6 +187,9 @@ class Settings(BaseSettings):
 
     def resolved_mcp_allowed_origins(self) -> list[str]:
         return [value.strip() for value in self.mcp_allowed_origins.split(",") if value.strip()]
+
+    def resolved_systemone_models(self) -> list[str]:
+        return [value.strip() for value in self.systemone_models.split(",") if value.strip()]
 
     def backend_overrides(self) -> list[dict[str, Any]] | None:
         """Parsed backend-chain override, or None to use the built-in tower."""

@@ -106,6 +106,11 @@ llm_prompt_cache_write_tokens_total = Counter(
 llm_upstream_latency_seconds = Histogram(
     "llm_upstream_latency_seconds", "Upstream generation latency", ["logical_model", "backend"]
 )
+llm_cost_usd_total = Counter(
+    "llm_cost_usd_total",
+    "USD charged for served hosted decision calls, from the configured input-token price",
+    ["logical_model", "backend"],
+)
 llm_ollama_duration_seconds = Histogram(
     "llm_ollama_duration_seconds",
     "Ollama final-response duration by generation phase",

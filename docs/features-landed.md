@@ -6,6 +6,7 @@ Part of [FEATURES](FEATURES.md).
 
 
 - **OpenAI-compatible request surface** - landed - `/v1/chat/completions`, `/v1/completions`, and `/v1/models`, including streaming and normalized reasoning content. `tools`, `tool_choice`, `parallel_tool_calls`, and `seed` reach the backend that can honor them, and a tool constraint an ollama-dialect backend would ignore gets a local 400 rather than a run that looks constrained. See [proxy-request-path.md](proxy-request-path.md).
+- **Jev decision shim** - landed - `/v1/systemone` fronts TypeSafe's System One model in the vendor's own request and answer shape, with a mounted key the caller never holds. It emits the chat path's spans, metrics and trajectory events plus the proxy's first cost signal. Deploy wiring is separate. See [systemone-shim.md](systemone-shim.md).
 - **Remote MCP prompt surface** - landed - stateless Streamable HTTP at `/mcp`
   exposes model discovery and non-streaming prompt tools through the existing
   Agent Proxy policy, reliability, telemetry, and trajectory path. See
@@ -44,14 +45,12 @@ Part of [FEATURES](FEATURES.md).
   provider that reports nothing distinguishable from a measured cache miss. It
   does not inject cache breakpoints or own a caching policy. See
   [proxy-prompt-cache.md](proxy-prompt-cache.md).
-- **Agent-compose trajectory ingestion** - landed - a cold-path adapter maps the
-  immutable manifest and public-safe decision trace into actor, artifact, and
-  observation events without copying the opaque context tree or granting
-  execution authority. See [agent-compose-ingestion.md](agent-compose-ingestion.md).
-- **Guard trajectory ingestion** - landed - cold-path adapters map cli-guard
-  audit rows into action, policy, and execution events, and hash specgen
-  guardfiles and locks into linked policy evidence without retaining sensitive
-  argv, diagnostics, paths, or hosts. See [guard-ingestion.md](guard-ingestion.md).
+- **Trajectory ingestion adapters** - landed - cold-path adapters map an
+  immutable agent-compose manifest and public-safe decision trace into actor,
+  artifact, and observation events, and cli-guard audit rows into action, policy,
+  and execution events with hashed specgen policy evidence. None copies the
+  opaque context tree, retains sensitive argv, diagnostics, paths, or hosts, or
+  grants execution authority. See [trajectory-ingestion.md](trajectory-ingestion.md).
 - **Runtime and delivery checks** - landed - SSM-backed configuration, local
   `/healthz`, metrics-only non-generating route readiness, `/metrics`,
   daemonless boot probing, container probing, and a reliability harness. Route
